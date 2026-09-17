@@ -36,7 +36,7 @@ fun main() {
     // Building a throwaway repository for this read would break both.
     //
     // v2's Android Application class does the same thing in onCreate.
-    val koin = startKoin { modules(appModule) }.koin
+    val koin = startKoin { modules(appModule()) }.koin
     val settings: SettingsRepository = koin.get()
 
     val saved = runBlocking {
