@@ -241,12 +241,16 @@ private fun Bubble(
             ),
         ) {
             Column(Modifier.padding(12.dp)) {
-                // Markdown rendering lands at M4. Plain text until then,
-                // deliberately — re-parsing on every chunk is the jank trap.
-                Text(
-                    overrideContent ?: message.content,
-                    style = MaterialTheme.typography.bodyMedium,
-                )
+                if (isUser) {
+                    // What the user typed is shown verbatim. Rendering it as
+                    // markdown would silently eat their asterisks and hashes.
+                    Text(message.content, style = MaterialTheme.typography.bodyMedium)
+                } else {
+                    MessageContent(
+                        text = overrideContent ?: message.content,
+                        isStreaming = overrideContent != null,
+                    )
+                }
 
                 val footer = buildList {
                     if (showModel) message.modelId?.let { add(it) }

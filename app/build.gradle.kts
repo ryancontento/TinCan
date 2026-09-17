@@ -24,6 +24,8 @@ kotlin {
             implementation(libs.koin.core)
             implementation(libs.koin.compose)
             implementation(libs.koin.compose.viewmodel)
+            implementation(libs.markdown.renderer)
+            implementation(libs.markdown.renderer.m3)
             implementation(projects.data)
             implementation(projects.llmApi)
             implementation(projects.llmOllama)
