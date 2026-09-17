@@ -1,0 +1,34 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
+local.properties
+
+# IntelliJ / Android Studio
+.idea/*
+!.idea/runConfigurations/
+*.iml
+*.iws
+*.ipr
+out/
+
+# Kotlin
+.kotlin/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Compose Desktop packaging output
+/app/packages/
+
+# Signing — never commit these
+*.jks
+*.keystore
+keystore.properties
+signing.properties
+
+# Gradle wrapper jar IS committed (see !gradle/wrapper/ above) — it is how
+# anyone else builds this without installing Gradle first.

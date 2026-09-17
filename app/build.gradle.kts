@@ -1,0 +1,57 @@
+import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+
+plugins {
+    alias(libs.plugins.kotlinMultiplatform)
+    alias(libs.plugins.composeMultiplatform)
+    alias(libs.plugins.composeCompiler)
+}
+
+kotlin {
+    jvmToolchain(21)
+    jvm("desktop")
+
+    sourceSets {
+        commonMain.dependencies {
+            implementation(compose.runtime)
+            implementation(compose.foundation)
+            implementation(compose.material3)
+            implementation(libs.kotlinx.coroutines.core)
+            implementation(projects.llmApi)
+            implementation(projects.llmOllama)
+        }
+        val desktopMain by getting
+        desktopMain.dependencies {
+            // currentOs resolves the Skia natives for the BUILD machine, which
+            // is exactly why jpackage cannot cross-compile. See the CI matrix.
+            implementation(compose.desktop.currentOs)
+            implementation(libs.kotlinx.coroutines.swing)
+        }
+    }
+}
+
+compose.desktop {
+    application {
+        mainClass = "io.github.ryancontento.tincan.MainKt"
+
+        nativeDistributions {
+            // No Dmg: macOS is deferred. Adding it here plus a macos-latest row
+            // in CI is the whole promotion.
+            targetFormats(TargetFormat.Msi, TargetFormat.Deb, TargetFormat.Rpm)
+            packageName = "TinCan"
+            packageVersion = "1.0.0"
+            description = "A chat client for local LLMs"
+            vendor = "Ryan Contento"
+
+            windows {
+                menuGroup = "TinCan"
+                // Generated once and then never changed — it is the upgrade
+                // identity for the MSI. A new UUID makes an existing install
+                // un-upgradeable.
+                upgradeUuid = "8F3A5C21-7B4E-4D19-9A6F-2E8C1D0B5477"
+            }
+            linux {
+                packageName = "tincan"
+            }
+        }
+    }
+}

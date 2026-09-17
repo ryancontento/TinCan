@@ -1,0 +1,12 @@
+# Normalise to LF in the repository. This is not cosmetic: gradlew is a shell
+# script, and if it is committed with CRLF the Linux CI runner fails with a
+# "bad interpreter" error that gives no hint about line endings.
+* text=auto eol=lf
+
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+*.jar binary
+*.png binary
+*.ico binary
+*.gguf binary

@@ -1,0 +1,55 @@
+name: Build
+
+# Set up early and deliberately: jpackage cannot cross-compile, so producing a
+# Linux .deb from a Windows machine is impossible. This matrix is the only Linux
+# build host that currently exists. Adding macos-latest later is a one-line diff.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ windows-latest, ubuntu-latest ]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - run: ./gradlew build --stacktrace
+
+  package:
+    name: Package (${{ matrix.os }})
+    # Only builds installers on tags; the check job covers every push.
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: tincan-windows
+          - os: ubuntu-latest
+            artifact: tincan-linux
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - run: ./gradlew :app:packageDistributionForCurrentOS --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: app/build/compose/binaries/main/*/
+          if-no-files-found: error
