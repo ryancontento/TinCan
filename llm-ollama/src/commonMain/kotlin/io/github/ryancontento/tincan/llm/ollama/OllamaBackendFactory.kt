@@ -2,6 +2,7 @@ package io.github.ryancontento.tincan.llm.ollama
 
 import io.github.ryancontento.tincan.llm.BackendId
 import io.github.ryancontento.tincan.llm.LlmBackend
+import io.github.ryancontento.tincan.llm.LlmBackendProvider
 
 /**
  * Builds backends that share one HTTP client.
@@ -18,17 +19,17 @@ import io.github.ryancontento.tincan.llm.LlmBackend
 class OllamaBackendFactory(
     connectTimeoutMillis: Long = 4_000,
     socketTimeoutMillis: Long = 120_000,
-) : AutoCloseable {
+) : LlmBackendProvider, AutoCloseable {
 
     private val client = OllamaHttpClient.create(
         connectTimeoutMillis = connectTimeoutMillis,
         socketTimeoutMillis = socketTimeoutMillis,
     )
 
-    fun create(
+    override fun create(
         baseUrl: String,
-        id: BackendId = BackendId("ollama"),
-        modelLoadingThresholdMillis: Long = 2_500,
+        id: BackendId,
+        modelLoadingThresholdMillis: Long,
     ): LlmBackend = RemoteOllamaBackend(
         id = id,
         baseUrl = baseUrl,

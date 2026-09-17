@@ -33,7 +33,7 @@ expect object TinCanDatabaseConstructor : RoomDatabaseConstructor<TinCanDatabase
 /** Supplies the platform's builder; the shared configuration is applied below. */
 internal expect fun databaseBuilder(directory: String): RoomDatabase.Builder<TinCanDatabase>
 
-fun createDatabase(directory: String = appDataDir()): TinCanDatabase =
+internal fun createDatabase(directory: String = appDataDir()): TinCanDatabase =
     databaseBuilder(directory)
         // The bundled driver ships its own SQLite rather than relying on one
         // being present, which is what makes Room work off Android at all.

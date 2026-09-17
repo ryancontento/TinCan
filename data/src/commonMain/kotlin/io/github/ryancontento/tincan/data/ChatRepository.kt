@@ -5,7 +5,7 @@ import io.github.ryancontento.tincan.data.db.ConversationEntity
 import io.github.ryancontento.tincan.data.db.MessageEntity
 import io.github.ryancontento.tincan.data.db.MessageRole
 import io.github.ryancontento.tincan.data.db.MessageStatus
-import io.github.ryancontento.tincan.data.db.TinCanDatabase
+import io.github.ryancontento.tincan.data.db.createDatabase
 import io.github.ryancontento.tincan.llm.ChatMessage
 import io.github.ryancontento.tincan.llm.GenerationStats
 import io.github.ryancontento.tincan.llm.Role
@@ -22,7 +22,13 @@ import kotlin.time.ExperimentalTime
  * keeps DataStore and Ktor out of module APIs.
  */
 @OptIn(ExperimentalTime::class)
-class ChatRepository internal constructor(private val dao: ChatDao) {
+class ChatRepository internal constructor(
+    private val dao: ChatDao,
+    private val closeDatabase: () -> Unit = {},
+) : AutoCloseable {
+
+    /** Releases the underlying database file lock. Tests need it; the app does not. */
+    override fun close() = closeDatabase()
 
     fun observeConversations(): Flow<List<ConversationEntity>> = dao.observeConversations()
 
@@ -140,6 +146,36 @@ class ChatRepository internal constructor(private val dao: ChatDao) {
     suspend fun discardMessage(messageId: Long) = dao.deleteMessage(messageId)
 
     /**
+     * Marks a message as composed but not delivered.
+     *
+     * This is what makes a message typed while the MacBook was asleep survive:
+     * it is already in the database, so it is queued rather than lost, and the
+     * UI can show it as waiting instead of pretending it was sent.
+     */
+    suspend fun markPending(messageId: Long) = dao.setMessageStatus(messageId, MessageStatus.PENDING)
+
+    suspend fun markDelivered(messageId: Long) = dao.setMessageStatus(messageId, MessageStatus.COMPLETE)
+
+    suspend fun oldestPendingMessage(conversationId: Long) = dao.oldestPendingMessage(conversationId)
+
+    fun observeConversationsWithPendingMessages(): Flow<List<Long>> =
+        dao.observeConversationsWithPendingMessages()
+
+    /**
+     * The last reply if it stopped short, or null.
+     *
+     * Only ever the final message: continuing anything earlier would mean
+     * rewriting history that the user has already read past.
+     */
+    suspend fun resumableReply(conversationId: Long): MessageEntity? =
+        dao.messages(conversationId).lastOrNull()
+            ?.takeIf { it.role == MessageRole.ASSISTANT && it.status == MessageStatus.INCOMPLETE }
+
+    /** Reopens a truncated reply so generation can append to the same row. */
+    suspend fun resumeAssistantMessage(messageId: Long) =
+        dao.setMessageStatus(messageId, MessageStatus.STREAMING)
+
+    /**
      * History for the next request. Failed turns are excluded — resending a
      * turn the server never answered would poison the context with an error.
      */
@@ -163,8 +199,14 @@ fun MessageRole.toDomain(): Role = when (this) {
 }
 
 /**
- * Builds a repository without exposing the database, matching how settings
- * persistence hides DataStore.
+ * Builds a repository over a database in [directory].
+ *
+ * The Room database is not part of this module's public API, for the same
+ * reason DataStore and the Ktor client are not part of theirs: returning it
+ * would put androidx.room on every consumer's classpath and invite callers to
+ * reach past the repository.
  */
-fun createChatRepository(database: TinCanDatabase): ChatRepository =
-    ChatRepository(database.chatDao())
+fun createChatRepository(directory: String = appDataDir()): ChatRepository {
+    val database = createDatabase(directory)
+    return ChatRepository(database.chatDao()) { database.close() }
+}

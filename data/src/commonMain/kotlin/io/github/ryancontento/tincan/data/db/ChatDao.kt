@@ -70,6 +70,24 @@ interface ChatDao {
         tokensPerSecond: Float?,
     )
 
+    @Query("UPDATE messages SET status = :status WHERE id = :id")
+    suspend fun setMessageStatus(id: Long, status: MessageStatus)
+
+    /** The oldest message still waiting to be delivered, if any. */
+    @Query(
+        """
+        SELECT * FROM messages
+        WHERE conversationId = :conversationId AND status = 'PENDING'
+        ORDER BY createdAt ASC, id ASC
+        LIMIT 1
+        """,
+    )
+    suspend fun oldestPendingMessage(conversationId: Long): MessageEntity?
+
+    /** Conversations holding undelivered messages, for retry once the server returns. */
+    @Query("SELECT DISTINCT conversationId FROM messages WHERE status = 'PENDING'")
+    fun observeConversationsWithPendingMessages(): Flow<List<Long>>
+
     @Query("DELETE FROM messages WHERE id = :id")
     suspend fun deleteMessage(id: Long)
 

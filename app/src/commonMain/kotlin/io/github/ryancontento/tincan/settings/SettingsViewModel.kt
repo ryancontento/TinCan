@@ -6,7 +6,7 @@ import io.github.ryancontento.tincan.chat.describe
 import io.github.ryancontento.tincan.data.SettingsRepository
 import io.github.ryancontento.tincan.data.TinCanSettings
 import io.github.ryancontento.tincan.llm.BackendHealth
-import io.github.ryancontento.tincan.llm.ollama.OllamaBackendFactory
+import io.github.ryancontento.tincan.llm.LlmBackendProvider
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,7 +27,7 @@ data class SettingsUiState(
 
 class SettingsViewModel(
     private val repository: SettingsRepository,
-    private val backends: OllamaBackendFactory,
+    private val backends: LlmBackendProvider,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SettingsUiState())

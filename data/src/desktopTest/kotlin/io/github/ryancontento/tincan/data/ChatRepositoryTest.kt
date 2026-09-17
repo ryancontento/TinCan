@@ -2,8 +2,6 @@ package io.github.ryancontento.tincan.data
 
 import io.github.ryancontento.tincan.data.db.MessageRole
 import io.github.ryancontento.tincan.data.db.MessageStatus
-import io.github.ryancontento.tincan.data.db.TinCanDatabase
-import io.github.ryancontento.tincan.data.db.createDatabase
 import io.github.ryancontento.tincan.llm.GenerationStats
 import io.github.ryancontento.tincan.llm.Role
 import kotlinx.coroutines.flow.first
@@ -19,18 +17,14 @@ import kotlin.test.assertTrue
  * Real SQLite on a real temp file, one database per test — Room holds a file
  * lock, so sharing a path across tests would deadlock rather than fail cleanly.
  */
-private fun tempDb(): Pair<TinCanDatabase, File> {
+private inline fun withRepo(block: (ChatRepository) -> Unit) {
     val dir = File(System.getProperty("java.io.tmpdir"), "tincan-db-${UUID.randomUUID()}")
     dir.mkdirs()
-    return createDatabase(dir.absolutePath) to dir
-}
-
-private inline fun withRepo(block: (ChatRepository) -> Unit) {
-    val (db, dir) = tempDb()
+    val repo = createChatRepository(dir.absolutePath)
     try {
-        block(createChatRepository(db))
+        block(repo)
     } finally {
-        db.close()
+        repo.close()
         dir.deleteRecursively()
     }
 }

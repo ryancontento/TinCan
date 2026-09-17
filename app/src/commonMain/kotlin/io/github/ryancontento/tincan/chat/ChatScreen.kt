@@ -85,11 +85,26 @@ fun ChatScreen(
                     onSelectModel = viewModel::selectModel,
                     onOpenSettings = onOpenSettings,
                     onReload = viewModel::refreshModels,
+                    connection = state.connection,
+                    queuedCount = state.queuedCount,
                 )
 
-                state.notice?.let { NoticeBar(it) }
+                state.notice?.let { notice ->
+                    NoticeBar(
+                        notice = notice,
+                        onAction = {
+                            when (notice.action) {
+                                NoticeAction.RETRY -> viewModel.checkConnection()
+                                NoticeAction.CONTINUE -> viewModel.continueReply()
+                                NoticeAction.OPEN_SETTINGS -> onOpenSettings()
+                                null -> Unit
+                            }
+                        },
+                        onDismiss = viewModel::dismissNotice,
+                    )
+                }
 
-                Transcript(state, Modifier.weight(1f))
+                Transcript(state, viewModel::continueReply, Modifier.weight(1f))
 
                 Composer(
                     draft = draft,
@@ -112,6 +127,8 @@ private fun TopBar(
     onSelectModel: (String) -> Unit,
     onOpenSettings: () -> Unit,
     onReload: () -> Unit,
+    connection: ConnectionState,
+    queuedCount: Int,
 ) {
     var expanded by remember { mutableStateOf(false) }
     Row(
@@ -143,26 +160,77 @@ private fun TopBar(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
+        ConnectionPill(connection, queuedCount)
         TextButton(onClick = onReload) { Text("Reload") }
         TextButton(onClick = onOpenSettings) { Text("Settings") }
     }
 }
 
 @Composable
-private fun NoticeBar(notice: Notice) {
-    Text(
-        notice.text,
-        style = MaterialTheme.typography.bodySmall,
-        color = when (notice.severity) {
-            Notice.Severity.ERROR -> MaterialTheme.colorScheme.error
-            Notice.Severity.INFO -> MaterialTheme.colorScheme.onSurfaceVariant
-        },
-        modifier = Modifier.padding(bottom = 8.dp),
-    )
+private fun ConnectionPill(connection: ConnectionState, queuedCount: Int) {
+    // Colour alone would not survive a colour-blind reader or a screenshot, so
+    // the state is spelled out as well.
+    val (label, tint) = when (connection) {
+        ConnectionState.ONLINE -> "Connected" to MaterialTheme.colorScheme.primary
+        ConnectionState.OFFLINE -> "Unreachable" to MaterialTheme.colorScheme.error
+        ConnectionState.CHECKING -> "Checking…" to MaterialTheme.colorScheme.onSurfaceVariant
+        ConnectionState.UNKNOWN -> "" to MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    if (label.isEmpty() && queuedCount == 0) return
+
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = tint)
+        if (queuedCount > 0) {
+            Text(
+                "·  queued",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
 }
 
 @Composable
-private fun Transcript(state: ChatUiState, modifier: Modifier = Modifier) {
+private fun NoticeBar(notice: Notice, onAction: () -> Unit, onDismiss: () -> Unit) {
+    val tint = when (notice.severity) {
+        Notice.Severity.ERROR -> MaterialTheme.colorScheme.error
+        Notice.Severity.INFO -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Row(
+        Modifier.fillMaxWidth().padding(bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            notice.text,
+            style = MaterialTheme.typography.bodySmall,
+            color = tint,
+            modifier = Modifier.weight(1f),
+        )
+        // One action, the one most likely to fix this particular failure —
+        // a dropped stream offers Continue, not Retry, because starting over
+        // would throw away the reply so far.
+        notice.action?.let { action ->
+            TextButton(onClick = onAction) {
+                Text(
+                    when (action) {
+                        NoticeAction.RETRY -> "Retry"
+                        NoticeAction.CONTINUE -> "Continue"
+                        NoticeAction.OPEN_SETTINGS -> "Settings"
+                    },
+                )
+            }
+        }
+        TextButton(onClick = onDismiss) { Text("Dismiss") }
+    }
+}
+
+@Composable
+private fun Transcript(
+    state: ChatUiState,
+    onContinue: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val listState = rememberLazyListState()
 
     // Autoscroll only while already pinned to the bottom, so scrolling up to
@@ -214,6 +282,17 @@ private fun Transcript(state: ChatUiState, modifier: Modifier = Modifier) {
                             .lastOrNull { it.role == MessageRole.ASSISTANT }
                             ?.modelId,
                 )
+            }
+
+            // A durable affordance, not just the transient notice: an
+            // unfinished reply is still unfinished after a restart, long after
+            // the error message that produced it has gone.
+            if (state.canContinue) {
+                item(key = "continue") {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+                        OutlinedButton(onClick = onContinue) { Text("Continue this reply") }
+                    }
+                }
             }
         }
     }

@@ -69,3 +69,19 @@ sealed interface LlmError {
 
     data class Unknown(val cause: Throwable) : LlmError
 }
+
+/**
+ * Supplies backends for a given address.
+ *
+ * Exists so callers depend on an interface rather than a concrete factory.
+ * Without it the failure-path state machine — offline, queue, reconnect,
+ * deliver — could only be exercised by actually unplugging a network, which is
+ * precisely the behaviour most worth testing and least convenient to reproduce.
+ */
+interface LlmBackendProvider {
+    fun create(
+        baseUrl: String,
+        id: BackendId = BackendId("ollama"),
+        modelLoadingThresholdMillis: Long = 2_500,
+    ): LlmBackend
+}
