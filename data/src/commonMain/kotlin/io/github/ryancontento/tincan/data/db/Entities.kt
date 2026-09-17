@@ -10,10 +10,7 @@ import androidx.room.TypeConverter
 data class ConversationEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val title: String,
-    /**
-     * The model to use for the *next* reply in this thread. A default, never a
-     * constraint — individual messages record what actually produced them.
-     */
+    /** Default for the next reply, never a constraint. */
     val defaultModelId: String?,
     val backendId: String,
     val systemPrompt: String?,
@@ -22,13 +19,8 @@ data class ConversationEntity(
 )
 
 /**
- * The model is recorded per message, not per conversation.
- *
- * This is what makes switching models mid-thread lossless: history is never
- * rewritten, and the UI can mark any message whose model differs from the one
- * before it. [backendId] earns its place for the same reason — on desktop you
- * genuinely will alternate between a local model and the MacBook inside one
- * conversation.
+ * Model is recorded per message, not per conversation, so switching mid-thread
+ * is lossless and the UI can mark where it changed. Same for [backendId].
  */
 @Entity(
     tableName = "messages",
@@ -60,18 +52,10 @@ data class MessageEntity(
 
 enum class MessageRole { USER, ASSISTANT, SYSTEM }
 
-/**
- * [PENDING] and [INCOMPLETE] are the two that earn their keep: a message
- * composed while the server was down, and a reply whose stream died partway.
- * Both are recoverable states rather than lost data.
- */
+/** PENDING = composed while offline. INCOMPLETE = stream died partway. Both recoverable. */
 enum class MessageStatus { PENDING, STREAMING, COMPLETE, INCOMPLETE, FAILED }
 
-/**
- * Explicit rather than relying on Room's enum handling, so the stored form is
- * pinned to the constant name and a future reordering of the enum cannot
- * silently reinterpret existing rows.
- */
+/** Explicit so stored values are pinned to constant names, not ordinals. */
 class Converters {
     @TypeConverter fun roleToString(value: MessageRole): String = value.name
 

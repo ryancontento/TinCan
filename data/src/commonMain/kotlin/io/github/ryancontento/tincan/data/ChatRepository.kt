@@ -14,12 +14,8 @@ import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
 /**
- * Conversation and message persistence.
- *
- * Deliberately exposes Room entities rather than a parallel set of domain
- * models: at this size a second layer of near-identical data classes would be
- * ceremony. The Room *database* stays private, though — the same rule that
- * keeps DataStore and Ktor out of module APIs.
+ * Exposes Room entities directly — a parallel domain model would be ceremony at
+ * this size. The database itself stays private, like DataStore and Ktor do.
  */
 @OptIn(ExperimentalTime::class)
 class ChatRepository internal constructor(
@@ -35,11 +31,7 @@ class ChatRepository internal constructor(
     fun observeMessages(conversationId: Long): Flow<List<MessageEntity>> =
         dao.observeMessages(conversationId)
 
-    /**
-     * Called once at startup. A process that died mid-generation leaves rows
-     * claiming to be STREAMING; nothing will ever finish them, so they are
-     * demoted rather than left to render as a reply that never completes.
-     */
+    /** Startup: rows left STREAMING belong to a dead process and will never finish. */
     suspend fun recoverInterruptedMessages() = dao.demoteOrphanedStreamingMessages()
 
     suspend fun createConversation(
@@ -68,11 +60,7 @@ class ChatRepository internal constructor(
     suspend fun renameConversation(id: Long, title: String) =
         dao.renameConversation(id, title.ifBlank { UNTITLED }, now())
 
-    /**
-     * Derives a title from the first thing the user actually said, but only
-     * while the conversation is still untitled — so a manual rename is never
-     * silently overwritten.
-     */
+    /** Only while still untitled, so a manual rename is never overwritten. */
     suspend fun titleFromFirstMessageIfUnset(conversationId: Long, firstUserMessage: String) {
         val conversation = dao.conversation(conversationId) ?: return
         if (conversation.title != UNTITLED) return
@@ -145,13 +133,7 @@ class ChatRepository internal constructor(
     /** Drops an assistant row that produced nothing, so a failure leaves no empty bubble. */
     suspend fun discardMessage(messageId: Long) = dao.deleteMessage(messageId)
 
-    /**
-     * Marks a message as composed but not delivered.
-     *
-     * This is what makes a message typed while the MacBook was asleep survive:
-     * it is already in the database, so it is queued rather than lost, and the
-     * UI can show it as waiting instead of pretending it was sent.
-     */
+    /** Composed but not delivered — already on disk, so it is queued, not lost. */
     suspend fun markPending(messageId: Long) = dao.setMessageStatus(messageId, MessageStatus.PENDING)
 
     suspend fun markDelivered(messageId: Long) = dao.setMessageStatus(messageId, MessageStatus.COMPLETE)
@@ -161,12 +143,7 @@ class ChatRepository internal constructor(
     fun observeConversationsWithPendingMessages(): Flow<List<Long>> =
         dao.observeConversationsWithPendingMessages()
 
-    /**
-     * The last reply if it stopped short, or null.
-     *
-     * Only ever the final message: continuing anything earlier would mean
-     * rewriting history that the user has already read past.
-     */
+    /** Only the final message; continuing an earlier one would rewrite read history. */
     suspend fun resumableReply(conversationId: Long): MessageEntity? =
         dao.messages(conversationId).lastOrNull()
             ?.takeIf { it.role == MessageRole.ASSISTANT && it.status == MessageStatus.INCOMPLETE }
@@ -175,10 +152,7 @@ class ChatRepository internal constructor(
     suspend fun resumeAssistantMessage(messageId: Long) =
         dao.setMessageStatus(messageId, MessageStatus.STREAMING)
 
-    /**
-     * History for the next request. Failed turns are excluded — resending a
-     * turn the server never answered would poison the context with an error.
-     */
+    /** Failed turns are excluded so errors do not poison the context. */
     suspend fun historyFor(conversationId: Long): List<ChatMessage> =
         dao.messages(conversationId)
             .filter { it.status != MessageStatus.FAILED && it.content.isNotBlank() }
@@ -198,14 +172,7 @@ fun MessageRole.toDomain(): Role = when (this) {
     MessageRole.SYSTEM -> Role.SYSTEM
 }
 
-/**
- * Builds a repository over a database in [directory].
- *
- * The Room database is not part of this module's public API, for the same
- * reason DataStore and the Ktor client are not part of theirs: returning it
- * would put androidx.room on every consumer's classpath and invite callers to
- * reach past the repository.
- */
+/** Room stays out of the public API so consumers never get androidx.room on their classpath. */
 fun createChatRepository(directory: String = appDataDir()): ChatRepository {
     val database = createDatabase(directory)
     return ChatRepository(database.chatDao()) { database.close() }

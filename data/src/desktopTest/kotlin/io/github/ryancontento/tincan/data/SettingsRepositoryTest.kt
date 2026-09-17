@@ -42,7 +42,7 @@ class SettingsRepositoryTest {
     fun written_values_survive_a_new_repository_over_the_same_file() = runTest {
         val (repo, dir) = tempRepo()
         try {
-            repo.setServerUrl("  http://macbook.tail1234.ts.net:11434  ")
+            repo.setServerUrl("  http://example-host.internal:11434  ")
             repo.setSelectedModel("phi4")
             repo.setNumCtx(8192)
             repo.setModelLoadingThreshold(15_000)
@@ -51,7 +51,7 @@ class SettingsRepositoryTest {
 
             // The setter trims — a URL pasted with trailing whitespace would
             // otherwise produce a confusing connection failure.
-            assertEquals("http://macbook.tail1234.ts.net:11434", settings.serverUrl)
+            assertEquals("http://example-host.internal:11434", settings.serverUrl)
             assertEquals("phi4", settings.selectedModel)
             assertEquals(8192, settings.numCtx)
             assertEquals(15_000, settings.modelLoadingThresholdMillis)

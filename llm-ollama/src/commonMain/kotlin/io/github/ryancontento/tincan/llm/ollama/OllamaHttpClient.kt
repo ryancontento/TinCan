@@ -9,10 +9,7 @@ import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 
-/**
- * Timeout configuration is the single most common way to break streaming with
- * Ktor, so it lives in one place with the reasoning attached.
- */
+/** Timeouts live in one place; they are the usual way Ktor streaming breaks. */
 internal object OllamaHttpClient {
 
     val json: Json = Json {
@@ -21,12 +18,8 @@ internal object OllamaHttpClient {
     }
 
     /**
-     * @param engine injectable so tests can pass MockEngine.
-     * @param connectTimeoutMillis short on purpose: a sleeping MacBook should
-     *   fail fast and show "asleep", not hang the UI for 30 seconds.
-     * @param socketTimeoutMillis the real guard during generation — it measures
-     *   the gap *between* bytes, so a slow CPU-bound model is fine as long as
-     *   it keeps producing something.
+     * @param connectTimeoutMillis short so a sleeping machine fails fast.
+     * @param socketTimeoutMillis gap between bytes, so slow models are fine.
      */
     fun create(
         engine: HttpClientEngine? = null,
@@ -36,9 +29,8 @@ internal object OllamaHttpClient {
         val configure: io.ktor.client.HttpClientConfig<*>.() -> Unit = {
             install(ContentNegotiation) { json(json) }
             install(HttpTimeout) {
-                // MUST be infinite. requestTimeoutMillis bounds the whole call,
-                // including the streaming body, so any finite value kills long
-                // generations partway through with a misleading timeout error.
+                // Must be infinite: this bounds the whole call including the
+                // streamed body, so any finite value kills long generations.
                 requestTimeoutMillis = HttpTimeoutConfig.INFINITE_TIMEOUT_MS
                 this.connectTimeoutMillis = connectTimeoutMillis
                 this.socketTimeoutMillis = socketTimeoutMillis

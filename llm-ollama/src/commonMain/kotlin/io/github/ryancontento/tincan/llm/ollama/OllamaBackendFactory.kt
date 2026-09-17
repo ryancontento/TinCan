@@ -5,16 +5,8 @@ import io.github.ryancontento.tincan.llm.LlmBackend
 import io.github.ryancontento.tincan.llm.LlmBackendProvider
 
 /**
- * Builds backends that share one HTTP client.
- *
- * This exists because the server URL is a setting the user can change at any
- * time, so a backend cannot be a process-wide singleton — but constructing
- * [RemoteOllamaBackend] directly on every send would spin up a fresh OkHttp
- * client, and with it a fresh connection pool and dispatcher thread pool, each
- * time. The factory keeps the expensive part shared and the cheap part
- * per-request.
- *
- * Callers still see no Ktor types.
+ * Backends share one HTTP client. The URL is a mutable setting so a backend
+ * cannot be a singleton, but a client per send would leak connection pools.
  */
 class OllamaBackendFactory(
     connectTimeoutMillis: Long = 4_000,

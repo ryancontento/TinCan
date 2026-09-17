@@ -3,48 +3,39 @@ package io.github.ryancontento.tincan.llm
 import kotlinx.coroutines.flow.Flow
 
 /**
- * The seam. Every implementation lives in its own module and knows nothing
- * about the UI, the database, or any other backend.
+ * The seam. Implementations live in their own module and know nothing about
+ * the UI or the database.
  *
- * A local Ollama and the MacBook are the *same* implementation with different
- * base URLs — "run it locally" is a settings value on desktop, not a feature.
+ * A local Ollama and a remote one are the same implementation with different
+ * base URLs — "run it locally" is a setting, not a feature.
  */
 interface LlmBackend {
     val id: BackendId
 
-    /** Cheap liveness check. Runs often, on a short timeout. */
+    /** Cheap liveness check, short timeout. */
     suspend fun probe(): BackendHealth
 
-    /** Runs rarely. Failure here is not fatal — the UI falls back to a free-text model field. */
+    /** Failure is not fatal; the UI falls back to a free-text model field. */
     suspend fun listModels(): Result<List<ModelInfo>>
 
     /**
-     * Streams a response. The flow always completes normally: failures arrive
-     * as a terminal [ChatEvent.Failed] rather than an exception, so callers have
-     * one code path and any partial output is already persisted when the error
-     * lands.
-     *
-     * Cancelling the flow stops generation and must leave a clean partial
-     * message, not a corrupt one.
+     * Streams a reply. Always completes normally — failures arrive as a terminal
+     * [ChatEvent.Failed], so callers have one path and partial output is already
+     * persisted. Cancelling leaves a clean partial message.
      */
     fun chat(request: ChatRequest): Flow<ChatEvent>
 }
 
 sealed interface ChatEvent {
-    /** An incremental chunk of the reply. Not necessarily a whole token. */
+    /** An incremental chunk, not necessarily a whole token. */
     data class Token(val text: String) : ChatEvent
 
-    /** Reasoning trace from models that emit one. Rendered collapsed. */
+    /** Reasoning trace from models that emit one. */
     data class Thinking(val text: String) : ChatEvent
 
     /**
-     * The server is loading weights into memory.
-     *
-     * This has no wire signal — Ollama reports load_duration only in the final
-     * message, which is useless for a live state. It is inferred from
-     * time-to-first-token, which is why the threshold must be configurable:
-     * what is correct for the Metal-accelerated M1 Pro will misfire constantly
-     * against CPU inference on localhost.
+     * No wire signal exists — Ollama reports load_duration only at the end — so
+     * this is inferred from time-to-first-token.
      */
     data object ModelLoading : ChatEvent
 
@@ -54,15 +45,15 @@ sealed interface ChatEvent {
 }
 
 sealed interface LlmError {
-    /** Connect timeout — the machine is asleep, off, or unreachable. */
+    /** Asleep, off, or unreachable. */
     data object Unreachable : LlmError
 
-    /** Host answered but nothing is listening — Ollama isn't running. */
+    /** Host is up but nothing is listening. */
     data object ConnectionRefused : LlmError
 
     data class ModelNotFound(val model: String) : LlmError
 
-    /** Socket died mid-generation. Partial output is still valid. */
+    /** Socket died mid-generation; partial output is still valid. */
     data object StreamInterrupted : LlmError
 
     data class Server(val code: Int, val body: String?) : LlmError
@@ -70,14 +61,7 @@ sealed interface LlmError {
     data class Unknown(val cause: Throwable) : LlmError
 }
 
-/**
- * Supplies backends for a given address.
- *
- * Exists so callers depend on an interface rather than a concrete factory.
- * Without it the failure-path state machine — offline, queue, reconnect,
- * deliver — could only be exercised by actually unplugging a network, which is
- * precisely the behaviour most worth testing and least convenient to reproduce.
- */
+/** Supplies backends per address, so callers depend on this rather than a concrete factory. */
 interface LlmBackendProvider {
     fun create(
         baseUrl: String,

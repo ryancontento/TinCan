@@ -26,13 +26,8 @@ private object Keys {
     val windowY = intPreferencesKey("window_y")
 }
 
-/**
- * Settings persistence.
- *
- * Absent keys fall back to the defaults on [TinCanSettings] rather than being
- * written eagerly on first run, so changing a default later actually reaches
- * existing installs instead of being shadowed by a stale stored copy.
- */
+/** Absent keys fall back to defaults rather than being written eagerly, so
+ * changing a default later still reaches existing installs. */
 class SettingsRepository internal constructor(private val store: DataStore<Preferences>) {
 
     val settings: Flow<TinCanSettings> = store.data.map { prefs ->
@@ -76,11 +71,7 @@ class SettingsRepository internal constructor(private val store: DataStore<Prefe
         it[Keys.loadingThreshold] = millis.coerceAtLeast(0)
     }
 
-    /**
-     * Written on close rather than on every drag. A negative position means the
-     * window was on a monitor that is no longer attached, so it is dropped and
-     * the window centres again instead of opening off-screen.
-     */
+    /** A negative position means a detached monitor; drop it so the window centres. */
     suspend fun setWindowGeometry(width: Int, height: Int, x: Int, y: Int) = edit { prefs ->
         prefs[Keys.windowWidth] = width.coerceAtLeast(MIN_WINDOW_DIMENSION)
         prefs[Keys.windowHeight] = height.coerceAtLeast(MIN_WINDOW_DIMENSION)

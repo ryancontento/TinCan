@@ -2,7 +2,7 @@ package io.github.ryancontento.tincan.data
 
 import io.github.ryancontento.tincan.llm.GenerationOptions
 
-/** Null members mean "never saved", which the window layer reads as "centre it". */
+/** Null means never saved; the window centres itself. */
 data class WindowGeometry(
     val width: Int? = null,
     val height: Int? = null,
@@ -10,32 +10,17 @@ data class WindowGeometry(
     val y: Int? = null,
 )
 
-/**
- * Everything the user can configure, with the defaults that apply on a fresh
- * install. Kept as one immutable value so the UI reads a single object rather
- * than juggling a flow per setting.
- */
+/** One immutable value so the UI reads a single object, not a flow per setting. */
 data class TinCanSettings(
     val serverUrl: String = DEFAULT_SERVER_URL,
     val selectedModel: String? = null,
     val systemPrompt: String = "",
     val temperature: Float? = null,
-    /**
-     * Ollama's own default is small and it truncates silently, so leaving this
-     * null means "whatever the server decides" — which is exactly the state
-     * worth warning about in the UI rather than hiding.
-     */
+    /** Null means the server decides — and truncates silently. Worth warning about. */
     val numCtx: Int? = null,
-    /**
-     * Sent per request; overrides OLLAMA_KEEP_ALIVE on the server. A longer
-     * value while the app is in use avoids paying the load cost repeatedly.
-     */
+    /** Sent per request; overrides OLLAMA_KEEP_ALIVE on the server. */
     val keepAlive: String = DEFAULT_KEEP_ALIVE,
-    /**
-     * Time-to-first-token before the UI claims the model is loading. Metal on
-     * the M1 Pro wants ~2.5s; CPU inference on a big local model can legitimately
-     * take far longer, and a fixed value misfires on one or the other.
-     */
+    /** Time-to-first-token before claiming "loading". GPU and CPU differ hugely. */
     val modelLoadingThresholdMillis: Long = DEFAULT_LOADING_THRESHOLD_MILLIS,
     val window: WindowGeometry = WindowGeometry(),
 ) {

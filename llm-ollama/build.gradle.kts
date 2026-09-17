@@ -1,22 +1,11 @@
-import com.android.build.gradle.LibraryExtension
-
 plugins {
-    alias(libs.plugins.kotlinMultiplatform)
+    id("tincan.kmp-library")
     alias(libs.plugins.kotlinSerialization)
 }
 
-// Like :llm-api, commonMain only. Ktor is multiplatform; the OkHttp engine
-// works on both the desktop JVM and Android, so no expect/actual is needed for
-// the HTTP client at all.
-// Android target is opt-in via -Ptincan.android=true; see :llm-api for why.
-val androidEnabled = providers.gradleProperty("tincan.android").orNull?.toBooleanStrictOrNull() ?: false
-if (androidEnabled) apply(plugin = "com.android.library")
-
+// commonMain only, like :llm-api. Ktor is multiplatform and the OkHttp engine
+// serves both desktop and Android, so no expect/actual is needed.
 kotlin {
-    jvmToolchain(21)
-    jvm("desktop")
-    if (androidEnabled) androidTarget()
-
     sourceSets {
         commonMain.dependencies {
             api(projects.llmApi)
@@ -32,18 +21,6 @@ kotlin {
             implementation(libs.ktor.client.mock)
             implementation(libs.kotlinx.coroutines.test)
             implementation(libs.turbine)
-        }
-    }
-}
-
-if (androidEnabled) {
-    extensions.configure<LibraryExtension> {
-        namespace = "io.github.ryancontento.tincan.llm.ollama"
-        compileSdk = 35
-        defaultConfig { minSdk = 26 }
-        compileOptions {
-            sourceCompatibility = JavaVersion.VERSION_11
-            targetCompatibility = JavaVersion.VERSION_11
         }
     }
 }

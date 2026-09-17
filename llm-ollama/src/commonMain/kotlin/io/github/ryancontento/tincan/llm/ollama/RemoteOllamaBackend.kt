@@ -37,12 +37,7 @@ class RemoteOllamaBackend internal constructor(
     private val modelLoadingThresholdMillis: Long,
 ) : LlmBackend {
 
-    /**
-     * @param modelLoadingThresholdMillis how long to wait for a first token
-     *   before reporting that the server is loading weights. Configurable
-     *   because the right value differs wildly between Metal on the M1 Pro and
-     *   CPU inference on a 64GB ThinkPad.
-     */
+    /** @param modelLoadingThresholdMillis differs hugely between GPU and CPU inference. */
     constructor(
         id: BackendId,
         baseUrl: String,
@@ -94,9 +89,8 @@ class RemoteOllamaBackend internal constructor(
     }
 
     override fun chat(request: ChatRequest): Flow<ChatEvent> = channelFlow {
-        // channelFlow rather than flow: emissions happen inside Ktor's
-        // execute { } block, which is a different coroutine context than the
-        // flow collector, and plain flow { } rejects that.
+        // channelFlow, not flow: emissions happen inside execute { }, a
+        // different coroutine context than the collector.
 
         var sawFirstToken = false
 
@@ -131,18 +125,9 @@ class RemoteOllamaBackend internal constructor(
                     return@execute
                 }
 
-                // ModelLoading has no wire signal — Ollama reports load_duration
-                // only in the final message — so it is inferred from
-                // time-to-first-token.
-                //
-                // The clock starts HERE, not when the request was sent. The
-                // server has accepted the request, so waiting now genuinely
-                // means it is loading weights; before this point, slowness is a
-                // connection problem and belongs to Unreachable. Starting it
-                // earlier also let the event fire on error responses, since a
-                // cancel afterwards races the timer.
-                //
-                // A threshold of zero or less disables the inference.
+                // Clock starts here, not at send: the server has accepted, so
+                // waiting now means loading. Earlier, it also fired on errors.
+                // Zero or less disables the inference.
                 val loadingWatcher = if (modelLoadingThresholdMillis > 0) {
                     producer.launch {
                         delay(modelLoadingThresholdMillis)
@@ -163,8 +148,7 @@ class RemoteOllamaBackend internal constructor(
                     val chunk = try {
                         OllamaHttpClient.json.decodeFromString(OllamaChatChunk.serializer(), line)
                     } catch (e: SerializationException) {
-                        // A malformed line mid-stream is not fatal — skip it
-                        // rather than discarding output already delivered.
+                        // A malformed line is not fatal; keep what already arrived.
                         continue
                     }
 
@@ -191,8 +175,7 @@ class RemoteOllamaBackend internal constructor(
 
                 send(
                     if (stats != null) ChatEvent.Completed(stats)
-                    // Channel closed without a done:true line — the socket died
-                    // partway. Whatever was already emitted stays valid.
+                    // Closed without done:true — the socket died partway.
                     else ChatEvent.Failed(LlmError.StreamInterrupted),
                 )
                 } finally {

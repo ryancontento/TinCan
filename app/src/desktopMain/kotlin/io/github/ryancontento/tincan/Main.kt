@@ -19,23 +19,15 @@ import org.koin.core.context.startKoin
  * probably belongs in commonMain instead.
  */
 fun main() {
-    // Compose Desktop loses exceptions thrown on the AWT event thread much more
-    // quietly than Android does. Installing this before the window opens is the
-    // difference between a stack trace and a silently dead UI.
+    // Compose Desktop swallows AWT-thread exceptions; without this the UI just dies.
     Thread.setDefaultUncaughtExceptionHandler { thread, error ->
         System.err.println("Uncaught exception on ${thread.name}:")
         error.printStackTrace()
     }
 
-    // Koin starts here rather than inside App() because the window size has to
-    // be known before the window is created, and that means reading settings
-    // before any composition exists.
-    //
-    // It also has to be exactly one graph: DataStore refuses to open a second
-    // instance over the same file in one process, and Room holds a file lock.
-    // Building a throwaway repository for this read would break both.
-    //
-    // v2's Android Application class does the same thing in onCreate.
+    // Started here, not in App(): window size must be read before any composition
+    // exists, and a second graph would mean a second DataStore over one file.
+    // v2 does the same in Application.onCreate.
     val koin = startKoin { modules(appModule()) }.koin
     val settings: SettingsRepository = koin.get()
 
@@ -60,12 +52,7 @@ fun main() {
 
         Window(
             onCloseRequest = {
-                // Saved on the way out rather than on every drag: resizing fires
-                // continuously, and writing each frame to disk would be a lot of
-                // churn for a value read once per launch.
-                //
-                // Wrapped because failing to remember a window size is never a
-                // reason to prevent the app from closing.
+                // On close, not on drag: resizing fires continuously. Never block exit.
                 runCatching {
                     runBlocking {
                         settings.setWindowGeometry(

@@ -4,14 +4,8 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 /*
- * Wire types for Ollama's native API.
- *
- * Deliberately NOT the OpenAI-compatible /v1 shim: the native endpoint returns
- * eval_count/eval_duration (tokens per second), load_duration, done_reason and
- * a separate `thinking` field for reasoning models. The shim discards all of
- * it, and NDJSON is simpler to parse than SSE besides — every line is one
- * complete JSON object, with no data: prefix, no [DONE] sentinel and no
- * multi-line event framing.
+ * Ollama native API, not the /v1 shim: the shim discards eval_count,
+ * load_duration, done_reason and `thinking`. NDJSON also beats SSE to parse.
  */
 
 @Serializable
@@ -35,10 +29,7 @@ internal data class OllamaOptions(
     @SerialName("num_ctx") val numCtx: Int? = null,
 )
 
-/**
- * One NDJSON line. Streaming lines carry [message] with `done = false`; the
- * final line carries `done = true` plus the timing fields.
- */
+/** One NDJSON line. The final one has done = true plus the timing fields. */
 @Serializable
 internal data class OllamaChatChunk(
     val model: String? = null,

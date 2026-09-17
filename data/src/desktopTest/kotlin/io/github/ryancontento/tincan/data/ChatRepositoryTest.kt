@@ -6,28 +6,10 @@ import io.github.ryancontento.tincan.llm.GenerationStats
 import io.github.ryancontento.tincan.llm.Role
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
-import java.io.File
-import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
-
-/**
- * Real SQLite on a real temp file, one database per test — Room holds a file
- * lock, so sharing a path across tests would deadlock rather than fail cleanly.
- */
-private inline fun withRepo(block: (ChatRepository) -> Unit) {
-    val dir = File(System.getProperty("java.io.tmpdir"), "tincan-db-${UUID.randomUUID()}")
-    dir.mkdirs()
-    val repo = createChatRepository(dir.absolutePath)
-    try {
-        block(repo)
-    } finally {
-        repo.close()
-        dir.deleteRecursively()
-    }
-}
 
 class ChatRepositoryTest {
 

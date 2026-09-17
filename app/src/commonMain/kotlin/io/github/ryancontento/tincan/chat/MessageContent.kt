@@ -29,18 +29,13 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.ColumnScope
+import com.mikepenz.markdown.compose.components.MarkdownComponentModel
 import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.m3.Markdown
 import kotlinx.coroutines.delay
 
-/**
- * Renders a reply's body.
- *
- * While streaming, the settled prefix is parsed as markdown and the tail is
- * drawn as plain text; see [splitStreamingMarkdown] for why. The parse is keyed
- * on the settled text via remember, so it runs once per paragraph rather than
- * once per chunk — which is the whole point of the split.
- */
+/** Streaming: settled prefix as markdown, tail as plain text. See [splitStreamingMarkdown]. */
 @Composable
 fun MessageContent(
     text: String,
@@ -48,7 +43,7 @@ fun MessageContent(
     modifier: Modifier = Modifier,
 ) {
     if (!isStreaming) {
-        // A reply cut off mid-block still renders as code rather than prose.
+        // Truncated replies still render as code, not prose.
         val complete = remember(text) { closeDanglingFence(text) }
         MarkdownBody(complete, modifier)
         return
@@ -58,8 +53,7 @@ fun MessageContent(
 
     Column(modifier) {
         if (split.settled.isNotBlank()) {
-            // Keyed on settled alone: the tail changing every 30ms must not
-            // drag the parser along with it.
+            // Keyed on settled alone so a 30ms tail does not re-run the parser.
             key(split.settled) { MarkdownBody(split.settled) }
         }
         if (split.pending.isNotEmpty()) {
@@ -73,21 +67,13 @@ fun MessageContent(
 
 @Composable
 private fun MarkdownBody(text: String, modifier: Modifier = Modifier) {
-    // Both slots are replaced: codeFence covers ``` blocks, codeBlock covers
-    // the four-space indented form. Leaving either default would mean some code
-    // silently has no copy button.
-    val components = markdownComponents(
-        codeFence = { model ->
-            val raw = model.content.substring(model.node.startOffset, model.node.endOffset)
-            val parsed = remember(raw) { parseFencedCode(raw) }
-            CodeBlock(code = parsed.code, language = parsed.language)
-        },
-        codeBlock = { model ->
-            val raw = model.content.substring(model.node.startOffset, model.node.endOffset)
-            val parsed = remember(raw) { parseFencedCode(raw) }
-            CodeBlock(code = parsed.code, language = parsed.language)
-        },
-    )
+    // Both slots replaced so fenced and indented code both get a copy button.
+    val renderCode: @Composable ColumnScope.(MarkdownComponentModel) -> Unit = { model ->
+        val raw = model.content.substring(model.node.startOffset, model.node.endOffset)
+        val parsed = remember(raw) { parseFencedCode(raw) }
+        CodeBlock(code = parsed.code, language = parsed.language)
+    }
+    val components = markdownComponents(codeFence = renderCode, codeBlock = renderCode)
 
     Markdown(
         content = text,
@@ -96,13 +82,7 @@ private fun MarkdownBody(text: String, modifier: Modifier = Modifier) {
     )
 }
 
-/**
- * A fenced code block with a copy button.
- *
- * Horizontally scrollable rather than wrapped: wrapped code is materially
- * harder to read, and a long line is better reached by scrolling than by
- * having its structure destroyed.
- */
+/** Scrolls horizontally rather than wrapping; wrapped code is harder to read. */
 @Composable
 fun CodeBlock(
     code: String,
@@ -157,14 +137,7 @@ fun CodeBlock(
 
 private const val COPIED_LABEL_MILLIS = 1_500L
 
-/**
- * A model's reasoning trace, collapsed by default.
- *
- * Collapsed because it is usually long, often repetitive, and not what was
- * asked for — but discarding it outright would be worse. Reasoning models like
- * gpt-oss emit a substantial share of their output here, and hiding it
- * permanently means paying for tokens that are never seen.
- */
+/** Collapsed by default: long and repetitive, but too much output to discard. */
 @Composable
 fun ReasoningTrace(
     thinking: String,
@@ -182,8 +155,7 @@ fun ReasoningTrace(
             Text(
                 text = when {
                     expanded -> "Hide reasoning"
-                    // While streaming, the trace is the only sign of life before
-                    // the first visible token arrives.
+                            // The only sign of life before the first visible token.
                     isStreaming -> "Thinking…"
                     else -> "Show reasoning"
                 },

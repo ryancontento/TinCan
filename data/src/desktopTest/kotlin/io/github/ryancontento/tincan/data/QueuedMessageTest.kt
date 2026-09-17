@@ -3,25 +3,11 @@ package io.github.ryancontento.tincan.data
 import io.github.ryancontento.tincan.data.db.MessageStatus
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
-import java.io.File
-import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
-
-private inline fun withRepo(block: (ChatRepository) -> Unit) {
-    val dir = File(System.getProperty("java.io.tmpdir"), "tincan-queue-${UUID.randomUUID()}")
-    dir.mkdirs()
-    val repo = createChatRepository(dir.absolutePath)
-    try {
-        block(repo)
-    } finally {
-        repo.close()
-        dir.deleteRecursively()
-    }
-}
 
 /** The behaviour that makes a sleeping MacBook survivable rather than lossy. */
 class QueuedMessageTest {
