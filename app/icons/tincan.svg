@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1E293B"/>
+      <stop offset="0.55" stop-color="#111C2E"/>
+      <stop offset="1" stop-color="#080D16"/>
+    </linearGradient>
+
+    <!-- Across-the-cylinder gradient: dark edge, hot specular, dark edge.
+         This is what reads as "metal" rather than "grey rectangle". -->
+    <linearGradient id="metal" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0.00" stop-color="#3F4C5F"/>
+      <stop offset="0.14" stop-color="#8A9AAD"/>
+      <stop offset="0.34" stop-color="#EDF3F9"/>
+      <stop offset="0.46" stop-color="#FFFFFF"/>
+      <stop offset="0.62" stop-color="#A9B7C7"/>
+      <stop offset="0.82" stop-color="#5B6B80"/>
+      <stop offset="1.00" stop-color="#2E3947"/>
+    </linearGradient>
+
+    <linearGradient id="rim" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#6B7B8F"/>
+      <stop offset="0.45" stop-color="#F8FBFF"/>
+      <stop offset="1" stop-color="#46536A"/>
+    </linearGradient>
+
+    <radialGradient id="mouth" cx="0.5" cy="0.42" r="0.62">
+      <stop offset="0" stop-color="#05080F"/>
+      <stop offset="0.75" stop-color="#0C1626"/>
+      <stop offset="1" stop-color="#16243A"/>
+    </radialGradient>
+
+    <linearGradient id="wire" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#22D3EE"/>
+      <stop offset="0.5" stop-color="#5EEAD4"/>
+      <stop offset="1" stop-color="#38BDF8"/>
+    </linearGradient>
+
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="9" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="drop" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+
+    <!-- One can, drawn upright with its open mouth at -y and its closed base
+         at +y. The string attaches to the base, so every placement below is
+         just a rotation of this group. -->
+    <g id="can">
+      <path d="M -46 -62 L -46 56 A 46 17 0 0 0 46 56 L 46 -62 Z" fill="url(#metal)"/>
+      <ellipse cx="0" cy="56" rx="46" ry="17" fill="#26313F" opacity="0.9"/>
+      <path d="M -46 -8 L 46 -8" stroke="#0F172A" stroke-opacity="0.18" stroke-width="6"/>
+      <path d="M -46 22 L 46 22" stroke="#0F172A" stroke-opacity="0.14" stroke-width="5"/>
+      <ellipse cx="0" cy="-62" rx="46" ry="17" fill="url(#mouth)"/>
+      <ellipse cx="0" cy="-62" rx="46" ry="17" fill="none" stroke="url(#rim)" stroke-width="7"/>
+    </g>
+  </defs>
+
+  <rect width="512" height="512" rx="115" fill="url(#bg)"/>
+
+  <!-- Faint circuit grid. Invisible at 16px, gives the surface texture at 256+. -->
+  <g stroke="#38BDF8" stroke-opacity="0.07" stroke-width="2">
+    <path d="M80 0 V512 M176 0 V512 M336 0 V512 M432 0 V512"/>
+    <path d="M0 80 H512 M0 176 H512 M0 336 H512 M0 432 H512"/>
+  </g>
+
+  <!-- Signal haze behind the line. -->
+  <ellipse cx="256" cy="256" rx="186" ry="132" fill="#22D3EE" opacity="0.12" transform="rotate(-45 256 256)"/>
+
+  <!-- Taut string, base to base. -->
+  <g filter="url(#glow)">
+    <line x1="193" y1="319" x2="319" y2="193" stroke="url(#wire)" stroke-width="12" stroke-linecap="round"/>
+    <circle cx="224.5" cy="287.5" r="9" fill="#CFFAFE"/>
+    <circle cx="256" cy="256" r="11" fill="#FFFFFF"/>
+    <circle cx="287.5" cy="224.5" r="9" fill="#CFFAFE"/>
+  </g>
+
+  <g filter="url(#drop)">
+    <use href="#can" transform="translate(145 367) rotate(225) scale(1.22)"/>
+    <use href="#can" transform="translate(367 145) rotate(45) scale(1.22)"/>
+  </g>
+</svg>

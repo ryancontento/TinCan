@@ -43,6 +43,7 @@ compose.desktop {
             vendor = "Ryan Contento"
 
             windows {
+                iconFile.set(project.file("icons/tincan.ico"))
                 menuGroup = "TinCan"
                 // Generated once and then never changed — it is the upgrade
                 // identity for the MSI. A new UUID makes an existing install
@@ -50,6 +51,7 @@ compose.desktop {
                 upgradeUuid = "8F3A5C21-7B4E-4D19-9A6F-2E8C1D0B5477"
             }
             linux {
+                iconFile.set(project.file("icons/png/tincan-256.png"))
                 packageName = "tincan"
             }
         }

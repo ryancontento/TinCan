@@ -1,5 +1,6 @@
 package io.github.ryancontento.tincan
 
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
@@ -26,6 +27,7 @@ fun main() {
             onCloseRequest = ::exitApplication,
             state = windowState,
             title = "TinCan",
+            icon = painterResource("tincan.png"),
         ) {
             App()
         }
