@@ -11,6 +11,8 @@ import io.github.ryancontento.tincan.data.db.MessageStatus
 import io.github.ryancontento.tincan.llm.BackendHealth
 import io.github.ryancontento.tincan.llm.ChatEvent
 import io.github.ryancontento.tincan.llm.ChatRequest
+import io.github.ryancontento.tincan.llm.ContextPlan
+import io.github.ryancontento.tincan.llm.planContext
 import io.github.ryancontento.tincan.llm.GenerationStats
 import io.github.ryancontento.tincan.llm.LlmError
 import io.github.ryancontento.tincan.llm.ModelInfo
@@ -50,6 +52,8 @@ data class ChatUiState(
     val messages: List<MessageEntity> = emptyList(),
     val streamingMessageId: Long? = null,
     val streamingText: String = "",
+    /** Live reasoning trace for the in-flight reply, shown collapsed. */
+    val streamingThinking: String = "",
     val isGenerating: Boolean = false,
     val availableModels: List<ModelInfo> = emptyList(),
     val settings: TinCanSettings = TinCanSettings(),
@@ -58,6 +62,8 @@ data class ChatUiState(
     val connectionDetail: String? = null,
     /** Messages composed while the server was unreachable, awaiting delivery. */
     val queuedCount: Int = 0,
+    /** What the last send actually fit into the window, or null before any send. */
+    val context: ContextPlan? = null,
 ) {
     val canContinue: Boolean
         get() = !isGenerating &&
@@ -351,7 +357,18 @@ class ChatViewModel(
         resumeMessageId: Long? = null,
         resumePrefix: String = "",
     ) {
-        val history = chatRepository.historyFor(conversationId)
+        // Trim here rather than letting Ollama do it silently. The server drops
+        // the oldest turns at num_ctx without telling the client, so a long
+        // conversation quietly develops amnesia that reads as the model being
+        // bad. Doing it locally means the app knows, and can say so.
+        val plan = planContext(
+            messages = chatRepository.historyFor(conversationId),
+            systemPrompt = settings.systemPrompt.takeIf { it.isNotBlank() },
+            budgetTokens = settings.numCtx,
+        )
+        _state.update { it.copy(context = plan) }
+        val history = plan.messages
+
         val assistantId = resumeMessageId
             ?: chatRepository.beginAssistantMessage(conversationId, model, settings.serverUrl)
 
@@ -359,6 +376,7 @@ class ChatViewModel(
             it.copy(
                 streamingMessageId = assistantId,
                 streamingText = resumePrefix,
+                streamingThinking = "",
                 isGenerating = true,
                 notice = null,
             )
@@ -377,7 +395,9 @@ class ChatViewModel(
             val now = uptime.elapsedNow().inWholeMilliseconds
             if (force || now - lastUiPublish >= UI_PUBLISH_INTERVAL_MILLIS) {
                 lastUiPublish = now
-                _state.update { it.copy(streamingText = buffer.toString()) }
+                _state.update {
+                    it.copy(streamingText = buffer.toString(), streamingThinking = thinking.toString())
+                }
             }
             if (force || now - lastDbWrite >= DB_WRITE_INTERVAL_MILLIS) {
                 lastDbWrite = now
@@ -458,10 +478,18 @@ class ChatViewModel(
             it.copy(
                 streamingMessageId = null,
                 streamingText = "",
+                streamingThinking = "",
                 isGenerating = false,
                 notice = when {
                     failure != null -> failure.toNotice(hasPartialOutput = body.isNotBlank())
                     stopped -> Notice("Stopped.", Notice.Severity.INFO, NoticeAction.CONTINUE)
+                    // Say it out loud when history was dropped, rather than
+                    // letting the conversation quietly lose its beginning.
+                    it.context?.trimmed == true -> Notice(
+                        "Trimmed the oldest  message(s) to fit the context window.",
+                        Notice.Severity.INFO,
+                        NoticeAction.OPEN_SETTINGS,
+                    )
                     else -> null
                 },
             )

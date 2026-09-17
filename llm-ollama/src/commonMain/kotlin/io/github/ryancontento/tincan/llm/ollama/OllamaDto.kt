@@ -77,4 +77,5 @@ internal data class OllamaTagDetails(
     val family: String? = null,
     @SerialName("quantization_level") val quantizationLevel: String? = null,
     @SerialName("parameter_size") val parameterSize: String? = null,
+    @SerialName("context_length") val contextLength: Int? = null,
 )

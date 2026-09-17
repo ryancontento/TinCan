@@ -18,6 +18,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -35,6 +36,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isAltPressed
@@ -48,6 +51,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import io.github.ryancontento.tincan.llm.CONTEXT_WARNING_THRESHOLD
 import io.github.ryancontento.tincan.data.db.MessageEntity
 import io.github.ryancontento.tincan.data.db.MessageRole
 import io.github.ryancontento.tincan.data.db.MessageStatus
@@ -62,10 +66,49 @@ fun ChatScreen(
     // TextFieldValue rather than String because Ctrl+Enter has to insert a
     // newline at the caret, which means knowing where the caret is.
     var draft by remember { mutableStateOf(TextFieldValue("")) }
+    // Hoisted so Ctrl+K can open it from outside the top bar.
+    var modelMenuOpen by remember { mutableStateOf(false) }
+    var sidebarWidth by remember { mutableStateOf(DEFAULT_SIDEBAR_WIDTH) }
 
-    Surface(Modifier.fillMaxSize()) {
+    Surface(
+        Modifier
+            .fillMaxSize()
+            // Window-level shortcuts. Preview so they win before a focused
+            // text field swallows the key.
+            .onPreviewKeyEvent { event ->
+                val key = when (event.key) {
+                    Key.Escape -> ShortcutKey.ESCAPE
+                    Key.N -> ShortcutKey.N
+                    Key.K -> ShortcutKey.K
+                    else -> null
+                }
+
+                when (
+                    key?.let {
+                        appShortcutFor(
+                            key = it,
+                            isKeyDown = event.type == KeyEventType.KeyDown,
+                            isCtrlPressed = event.isCtrlPressed,
+                            isMetaPressed = event.isMetaPressed,
+                            isShiftPressed = event.isShiftPressed,
+                            isAltPressed = event.isAltPressed,
+                        )
+                    }
+                ) {
+                    AppShortcut.NEW_CONVERSATION -> { viewModel.newConversation(); draft = TextFieldValue(""); true }
+                    AppShortcut.FOCUS_MODEL_PICKER -> { modelMenuOpen = true; true }
+                    // Only claimed while generating, so Escape stays available
+                    // for dismissing menus the rest of the time.
+                    AppShortcut.STOP_GENERATION ->
+                        if (state.isGenerating) { viewModel.stop(); true } else false
+                    null -> false
+                }
+            },
+    ) {
         Row(Modifier.fillMaxSize()) {
             ConversationSidebar(
+                width = sidebarWidth,
+                onWidthChange = { sidebarWidth = it },
                 conversations = state.conversations,
                 activeId = state.activeConversationId,
                 // Switching threads mid-stream would orphan the reply being
@@ -83,11 +126,15 @@ fun ChatScreen(
                     models = state.availableModels.map { it.id },
                     serverUrl = state.settings.serverUrl,
                     onSelectModel = viewModel::selectModel,
+                    menuOpen = modelMenuOpen,
+                    onMenuOpenChange = { modelMenuOpen = it },
                     onOpenSettings = onOpenSettings,
                     onReload = viewModel::refreshModels,
                     connection = state.connection,
                     queuedCount = state.queuedCount,
                 )
+
+                ContextMeter(state)
 
                 state.notice?.let { notice ->
                     NoticeBar(
@@ -125,29 +172,30 @@ private fun TopBar(
     models: List<String>,
     serverUrl: String,
     onSelectModel: (String) -> Unit,
+    menuOpen: Boolean,
+    onMenuOpenChange: (Boolean) -> Unit,
     onOpenSettings: () -> Unit,
     onReload: () -> Unit,
     connection: ConnectionState,
     queuedCount: Int,
 ) {
-    var expanded by remember { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth().padding(bottom = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box {
-            OutlinedButton(onClick = { expanded = true }) {
+            OutlinedButton(onClick = { onMenuOpenChange(true) }) {
                 Text(modelLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { onMenuOpenChange(false) }) {
                 if (models.isEmpty()) {
-                    DropdownMenuItem(text = { Text("No models found") }, onClick = { expanded = false })
+                    DropdownMenuItem(text = { Text("No models found") }, onClick = { onMenuOpenChange(false) })
                 }
                 models.forEach { id ->
                     DropdownMenuItem(
                         text = { Text(id) },
-                        onClick = { onSelectModel(id); expanded = false },
+                        onClick = { onSelectModel(id); onMenuOpenChange(false) },
                     )
                 }
             }
@@ -274,6 +322,7 @@ private fun Transcript(
                 Bubble(
                     message = message,
                     overrideContent = if (isStreaming) state.streamingText.ifEmpty { "…" } else null,
+                    thinking = if (isStreaming) state.streamingThinking else message.thinking.orEmpty(),
                     // A model chip only where it changes, so a single-model
                     // thread stays quiet and a switch is obvious.
                     showModel = message.modelId != null &&
@@ -302,8 +351,11 @@ private fun Transcript(
 private fun Bubble(
     message: MessageEntity,
     overrideContent: String?,
+    thinking: String,
     showModel: Boolean,
 ) {
+    val clipboard = LocalClipboardManager.current
+    var copied by remember { mutableStateOf(false) }
     val isUser = message.role == MessageRole.USER
     Row(
         Modifier.fillMaxWidth(),
@@ -320,6 +372,9 @@ private fun Bubble(
             ),
         ) {
             Column(Modifier.padding(12.dp)) {
+                if (!isUser) {
+                    ReasoningTrace(thinking = thinking, isStreaming = overrideContent != null)
+                }
                 if (isUser) {
                     // What the user typed is shown verbatim. Rendering it as
                     // markdown would silently eat their asterisks and hashes.
@@ -337,13 +392,27 @@ private fun Bubble(
                     if (message.status == MessageStatus.INCOMPLETE) add("incomplete")
                     if (message.status == MessageStatus.PENDING) add("queued")
                 }
-                if (footer.isNotEmpty()) {
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Text(
                         footer.joinToString(" · "),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 6.dp),
                     )
+                    // Per-message copy, not just per code block: the prose is
+                    // often the part worth keeping.
+                    TextButton(onClick = {
+                        clipboard.setText(AnnotatedString(overrideContent ?: message.content))
+                        copied = true
+                    }) {
+                        Text(
+                            if (copied) "Copied" else "Copy",
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
                 }
             }
         }
@@ -421,3 +490,66 @@ private fun TextFieldValue.withNewlineAtCaret(): TextFieldValue {
         selection = TextRange(start + 1),
     )
 }
+
+/**
+ * How much of the context window the next request will use.
+ *
+ * Shown because Ollama truncates at num_ctx without telling the client. The
+ * "no limit set" case is called out explicitly rather than drawn as an empty
+ * bar: an unset num_ctx is the state most likely to lose history, and a
+ * reassuring-looking gauge would be a lie.
+ */
+@Composable
+private fun ContextMeter(state: ChatUiState) {
+    val plan = state.context ?: return
+    if (state.messages.isEmpty()) return
+
+    val fraction = plan.fractionUsed
+    val model = state.availableModels.firstOrNull { it.id == state.settings.selectedModel }
+
+    // Bound locally: budgetTokens is a nullable property from another module,
+    // so the compiler will not smart-cast it inside the branches.
+    val budget = plan.budgetTokens
+    val used = plan.estimatedTokens.formatTokens()
+
+    val (text, tint) = when {
+        budget == null -> {
+            val supported = model?.contextLength
+            val hint = if (supported != null) " This model supports ${supported.formatTokens()}." else ""
+            "~$used used · no context limit set, so the server decides and will " +
+                "drop old turns silently.$hint" to MaterialTheme.colorScheme.error
+        }
+        plan.trimmed ->
+            "~$used of ${budget.formatTokens()} · oldest ${plan.droppedCount} message(s) trimmed to fit" to
+                MaterialTheme.colorScheme.error
+        fraction != null && fraction >= CONTEXT_WARNING_THRESHOLD ->
+            "~$used of ${budget.formatTokens()} · approaching the limit" to MaterialTheme.colorScheme.error
+        else ->
+            "~$used of ${budget.formatTokens()}" to MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
+    Column(Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+        if (fraction != null) {
+            LinearProgressIndicator(
+                progress = { fraction.coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth(),
+                color = tint,
+            )
+        }
+        Text(
+            text,
+            style = MaterialTheme.typography.labelSmall,
+            color = tint,
+            modifier = Modifier.padding(top = 3.dp),
+        )
+    }
+}
+
+/** 8192 reads better than 8192 when it is 8.2k. */
+private fun Int.formatTokens(): String = when {
+    this >= 1_000_000 -> "${this / 1_000_000}M"
+    this >= 1_000 -> "${(this / 100) / 10.0}k"
+    else -> toString()
+}
+
+private val DEFAULT_SIDEBAR_WIDTH = 260.dp

@@ -17,6 +17,8 @@ data class ModelInfo(
     val sizeBytes: Long? = null,
     val family: String? = null,
     val quantization: String? = null,
+    /** What the model itself supports, which is not what Ollama necessarily allocates. */
+    val contextLength: Int? = null,
 )
 
 data class ChatRequest(

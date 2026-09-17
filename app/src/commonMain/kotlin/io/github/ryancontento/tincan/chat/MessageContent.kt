@@ -5,6 +5,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -155,3 +156,51 @@ fun CodeBlock(
 }
 
 private const val COPIED_LABEL_MILLIS = 1_500L
+
+/**
+ * A model's reasoning trace, collapsed by default.
+ *
+ * Collapsed because it is usually long, often repetitive, and not what was
+ * asked for — but discarding it outright would be worse. Reasoning models like
+ * gpt-oss emit a substantial share of their output here, and hiding it
+ * permanently means paying for tokens that are never seen.
+ */
+@Composable
+fun ReasoningTrace(
+    thinking: String,
+    isStreaming: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    if (thinking.isBlank()) return
+    var expanded by remember { mutableStateOf(false) }
+
+    Column(modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+        TextButton(
+            onClick = { expanded = !expanded },
+            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+        ) {
+            Text(
+                text = when {
+                    expanded -> "Hide reasoning"
+                    // While streaming, the trace is the only sign of life before
+                    // the first visible token arrives.
+                    isStreaming -> "Thinking…"
+                    else -> "Show reasoning"
+                },
+                style = MaterialTheme.typography.labelSmall,
+            )
+        }
+        if (expanded) {
+            Text(
+                thinking,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .padding(10.dp),
+            )
+        }
+    }
+}

@@ -82,6 +82,7 @@ class RemoteOllamaBackend internal constructor(
                         sizeBytes = tag.size,
                         family = tag.details?.family,
                         quantization = tag.details?.quantizationLevel,
+                        contextLength = tag.details?.contextLength,
                     )
                 }.sortedBy { it.displayName },
             )
