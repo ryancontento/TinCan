@@ -28,6 +28,9 @@ kotlin {
             implementation(projects.llmApi)
             implementation(projects.llmOllama)
         }
+        commonTest.dependencies {
+            implementation(libs.kotlin.test)
+        }
         val desktopMain by getting
         desktopMain.dependencies {
             // currentOs resolves the Skia natives for the BUILD machine, which

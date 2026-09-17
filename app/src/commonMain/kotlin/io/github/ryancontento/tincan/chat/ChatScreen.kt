@@ -35,6 +35,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.ryancontento.tincan.data.db.MessageEntity
@@ -48,7 +59,9 @@ fun ChatScreen(
     viewModel: ChatViewModel = koinViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
-    var draft by remember { mutableStateOf("") }
+    // TextFieldValue rather than String because Ctrl+Enter has to insert a
+    // newline at the caret, which means knowing where the caret is.
+    var draft by remember { mutableStateOf(TextFieldValue("")) }
 
     Surface(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxSize()) {
@@ -83,7 +96,7 @@ fun ChatScreen(
                     onDraftChange = { draft = it },
                     isGenerating = state.isGenerating,
                     canSend = state.settings.selectedModel != null,
-                    onSend = { viewModel.send(draft); draft = "" },
+                    onSend = { viewModel.send(draft.text); draft = TextFieldValue("") },
                     onStop = viewModel::stop,
                 )
             }
@@ -256,13 +269,15 @@ private fun Bubble(
 
 @Composable
 private fun Composer(
-    draft: String,
-    onDraftChange: (String) -> Unit,
+    draft: TextFieldValue,
+    onDraftChange: (TextFieldValue) -> Unit,
     isGenerating: Boolean,
     canSend: Boolean,
     onSend: () -> Unit,
     onStop: () -> Unit,
 ) {
+    val submittable = canSend && !isGenerating && draft.text.isNotBlank()
+
     Row(
         Modifier.fillMaxWidth().padding(top = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -272,12 +287,54 @@ private fun Composer(
             value = draft,
             onValueChange = onDraftChange,
             label = { Text("Message") },
-            modifier = Modifier.weight(1f),
+            supportingText = { Text("Enter sends · Ctrl+Enter or Shift+Enter for a new line") },
+            modifier = Modifier
+                .weight(1f)
+                // Preview, not onKeyEvent: the text field consumes Enter to
+                // insert its own newline, so the press has to be intercepted on
+                // the way down or Send never sees it.
+                .onPreviewKeyEvent { event ->
+                    when (
+                        composerAction(
+                            isEnter = event.key == Key.Enter || event.key == Key.NumPadEnter,
+                            isKeyDown = event.type == KeyEventType.KeyDown,
+                            isCtrlPressed = event.isCtrlPressed,
+                            isShiftPressed = event.isShiftPressed,
+                            isMetaPressed = event.isMetaPressed,
+                            isAltPressed = event.isAltPressed,
+                        )
+                    ) {
+                        ComposerAction.SEND -> {
+                            // Consumed either way. Letting an unsendable Enter
+                            // through would drop a stray newline into a message
+                            // the user thought they had just sent.
+                            if (submittable) onSend()
+                            true
+                        }
+
+                        ComposerAction.NEWLINE -> {
+                            onDraftChange(draft.withNewlineAtCaret())
+                            true
+                        }
+
+                        ComposerAction.IGNORE -> false
+                    }
+                },
         )
         if (isGenerating) {
             Button(onClick = onStop) { Text("Stop") }
         } else {
-            Button(onClick = onSend, enabled = canSend && draft.isNotBlank()) { Text("Send") }
+            Button(onClick = onSend, enabled = submittable) { Text("Send") }
         }
     }
+}
+
+/** Replaces the selection with a line break and leaves the caret after it. */
+private fun TextFieldValue.withNewlineAtCaret(): TextFieldValue {
+    val start = selection.min
+    val end = selection.max
+    return TextFieldValue(
+        text = text.substring(0, start) + "\n" + text.substring(end),
+        selection = TextRange(start + 1),
+    )
 }
