@@ -100,9 +100,16 @@ class RemoteOllamaBackend internal constructor(
         var sawFirstToken = false
 
         // ModelLoading has no wire signal, so infer it from time-to-first-token.
-        val loadingWatcher = launch {
-            delay(modelLoadingThresholdMillis)
-            if (!sawFirstToken) send(ChatEvent.ModelLoading)
+        // A threshold of zero or less disables the inference entirely, which is
+        // what tests want: runTest uses a virtual clock and fast-forwards every
+        // delay, so any positive threshold fires immediately under test.
+        val loadingWatcher = if (modelLoadingThresholdMillis > 0) {
+            launch {
+                delay(modelLoadingThresholdMillis)
+                if (!sawFirstToken) send(ChatEvent.ModelLoading)
+            }
+        } else {
+            null
         }
 
         try {
@@ -127,6 +134,8 @@ class RemoteOllamaBackend internal constructor(
                 setBody(body)
             }.execute { response ->
                 if (!response.status.isSuccess()) {
+                    // The server answered, so it is plainly not loading a model.
+                    loadingWatcher?.cancel()
                     val text = runCatching { response.bodyAsText() }.getOrNull()
                     send(ChatEvent.Failed(mapHttpError(response.status, text, request.model)))
                     return@execute
@@ -180,7 +189,7 @@ class RemoteOllamaBackend internal constructor(
         } catch (e: Throwable) {
             send(ChatEvent.Failed(e.toLlmError()))
         } finally {
-            loadingWatcher.cancel()
+            loadingWatcher?.cancel()
         }
     }
 
