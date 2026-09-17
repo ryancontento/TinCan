@@ -3,6 +3,8 @@ import com.android.build.gradle.LibraryExtension
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
     alias(libs.plugins.kotlinSerialization)
+    alias(libs.plugins.ksp)
+    alias(libs.plugins.room)
 }
 
 // Android target is opt-in via -Ptincan.android=true; see :llm-api for why.
@@ -21,6 +23,9 @@ kotlin {
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.datastore.preferences)
             implementation(libs.okio)
+            implementation(libs.kotlinx.datetime)
+            implementation(libs.room.runtime)
+            implementation(libs.sqlite.bundled)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
@@ -40,4 +45,16 @@ if (androidEnabled) {
             targetCompatibility = JavaVersion.VERSION_11
         }
     }
+}
+
+// Schemas are committed from the very first build. Room can only generate an
+// automatic migration by diffing against the previous schema JSON, so a version
+// that was never exported can never be migrated from — only destroyed.
+room {
+    schemaDirectory("$projectDir/schemas")
+}
+
+dependencies {
+    add("kspDesktop", libs.room.compiler)
+    if (androidEnabled) add("kspAndroid", libs.room.compiler)
 }

@@ -7,8 +7,9 @@ Desktop first — Windows and Linux. Android is v2 on the same codebase.
 
 ## Status
 
-M0/M1. The app opens a window, lists models from Ollama, and streams a reply.
-No conversation history yet (that's M3), no markdown rendering (M4).
+M3. Conversations persist in SQLite, history survives restart, and a reply
+interrupted by the process dying is recovered as incomplete rather than lost.
+No markdown rendering yet (M4) — code blocks render as plain text.
 
 ## Requirements
 
@@ -38,6 +39,7 @@ and nothing else. Linux packages come from the CI matrix in
 
 ```
 app/          Compose UI and state — commonMain, plus a desktop entry point
+data/         Room database and DataStore settings; the platform-aware module
 llm-api/      The LlmBackend interface and domain types. commonMain only.
 llm-ollama/   Ktor implementation against Ollama's native /api/chat. commonMain only.
 ```

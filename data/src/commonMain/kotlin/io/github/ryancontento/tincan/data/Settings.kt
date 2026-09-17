@@ -2,10 +2,18 @@ package io.github.ryancontento.tincan.data
 
 import io.github.ryancontento.tincan.llm.GenerationOptions
 
+/** Null members mean "never saved", which the window layer reads as "centre it". */
+data class WindowGeometry(
+    val width: Int? = null,
+    val height: Int? = null,
+    val x: Int? = null,
+    val y: Int? = null,
+)
+
 /**
  * Everything the user can configure, with the defaults that apply on a fresh
  * install. Kept as one immutable value so the UI reads a single object rather
- * than juggling seven independent flows.
+ * than juggling a flow per setting.
  */
 data class TinCanSettings(
     val serverUrl: String = DEFAULT_SERVER_URL,
@@ -29,6 +37,7 @@ data class TinCanSettings(
      * take far longer, and a fixed value misfires on one or the other.
      */
     val modelLoadingThresholdMillis: Long = DEFAULT_LOADING_THRESHOLD_MILLIS,
+    val window: WindowGeometry = WindowGeometry(),
 ) {
     fun toGenerationOptions() = GenerationOptions(
         temperature = temperature,

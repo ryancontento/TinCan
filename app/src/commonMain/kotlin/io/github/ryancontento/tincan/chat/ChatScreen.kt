@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -23,8 +24,10 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -34,8 +37,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.runtime.collectAsState
-import io.github.ryancontento.tincan.llm.Role
+import io.github.ryancontento.tincan.data.db.MessageEntity
+import io.github.ryancontento.tincan.data.db.MessageRole
+import io.github.ryancontento.tincan.data.db.MessageStatus
 import org.koin.compose.viewmodel.koinViewModel
 
 @Composable
@@ -47,28 +51,42 @@ fun ChatScreen(
     var draft by remember { mutableStateOf("") }
 
     Surface(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().padding(16.dp)) {
-            TopBar(
-                modelLabel = state.settings.selectedModel ?: "No model",
-                models = state.availableModels.map { it.id },
-                serverUrl = state.settings.serverUrl,
-                onSelectModel = viewModel::selectModel,
-                onOpenSettings = onOpenSettings,
-                onReload = viewModel::refreshModels,
+        Row(Modifier.fillMaxSize()) {
+            ConversationSidebar(
+                conversations = state.conversations,
+                activeId = state.activeConversationId,
+                // Switching threads mid-stream would orphan the reply being
+                // written, so the whole rail is inert while generating.
+                enabled = !state.isGenerating,
+                onSelect = viewModel::select,
+                onNew = viewModel::newConversation,
+                onDelete = viewModel::deleteConversation,
             )
+            VerticalDivider()
 
-            state.notice?.let { NoticeBar(it) }
+            Column(Modifier.fillMaxHeight().padding(16.dp)) {
+                TopBar(
+                    modelLabel = state.settings.selectedModel ?: "No model",
+                    models = state.availableModels.map { it.id },
+                    serverUrl = state.settings.serverUrl,
+                    onSelectModel = viewModel::selectModel,
+                    onOpenSettings = onOpenSettings,
+                    onReload = viewModel::refreshModels,
+                )
 
-            Transcript(state, Modifier.weight(1f))
+                state.notice?.let { NoticeBar(it) }
 
-            Composer(
-                draft = draft,
-                onDraftChange = { draft = it },
-                isGenerating = state.isGenerating,
-                canSend = state.settings.selectedModel != null,
-                onSend = { viewModel.send(draft); draft = "" },
-                onStop = viewModel::stop,
-            )
+                Transcript(state, Modifier.weight(1f))
+
+                Composer(
+                    draft = draft,
+                    onDraftChange = { draft = it },
+                    isGenerating = state.isGenerating,
+                    canSend = state.settings.selectedModel != null,
+                    onSend = { viewModel.send(draft); draft = "" },
+                    onStop = viewModel::stop,
+                )
+            }
         }
     }
 }
@@ -119,14 +137,13 @@ private fun TopBar(
 
 @Composable
 private fun NoticeBar(notice: Notice) {
-    val color = when (notice.severity) {
-        Notice.Severity.ERROR -> MaterialTheme.colorScheme.error
-        Notice.Severity.INFO -> MaterialTheme.colorScheme.onSurfaceVariant
-    }
     Text(
         notice.text,
         style = MaterialTheme.typography.bodySmall,
-        color = color,
+        color = when (notice.severity) {
+            Notice.Severity.ERROR -> MaterialTheme.colorScheme.error
+            Notice.Severity.INFO -> MaterialTheme.colorScheme.onSurfaceVariant
+        },
         modifier = Modifier.padding(bottom = 8.dp),
     )
 }
@@ -144,11 +161,22 @@ private fun Transcript(state: ChatUiState, modifier: Modifier = Modifier) {
             last == null || last.index >= info.totalItemsCount - 1
         }
     }
-    LaunchedEffect(state.messages.size, state.streaming) {
+    LaunchedEffect(state.messages.size, state.streamingText) {
         if (pinned) {
             val last = listState.layoutInfo.totalItemsCount - 1
             if (last >= 0) listState.animateScrollToItem(last)
         }
+    }
+
+    if (state.messages.isEmpty()) {
+        Box(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Text(
+                "Ask it something.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        return
     }
 
     SelectionContainer {
@@ -157,27 +185,34 @@ private fun Transcript(state: ChatUiState, modifier: Modifier = Modifier) {
             modifier = modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            items(state.messages, key = { it.id }) { Bubble(it) }
-
-            state.streaming?.let { partial ->
-                item(key = "streaming") {
-                    Bubble(
-                        UiMessage(
-                            id = -1,
-                            role = Role.ASSISTANT,
-                            content = partial.ifEmpty { "…" },
-                            modelId = state.settings.selectedModel,
-                        ),
-                    )
-                }
+            items(state.messages, key = { it.id }) { message ->
+                // The row being streamed into is persisted only every half
+                // second, so its live text is overlaid here. Same row, same key
+                // — no duplicate bubble and nothing to swap at the end.
+                val isStreaming = message.id == state.streamingMessageId
+                Bubble(
+                    message = message,
+                    overrideContent = if (isStreaming) state.streamingText.ifEmpty { "…" } else null,
+                    // A model chip only where it changes, so a single-model
+                    // thread stays quiet and a switch is obvious.
+                    showModel = message.modelId != null &&
+                        message.modelId != state.messages
+                            .takeWhile { it.id != message.id }
+                            .lastOrNull { it.role == MessageRole.ASSISTANT }
+                            ?.modelId,
+                )
             }
         }
     }
 }
 
 @Composable
-private fun Bubble(message: UiMessage) {
-    val isUser = message.role == Role.USER
+private fun Bubble(
+    message: MessageEntity,
+    overrideContent: String?,
+    showModel: Boolean,
+) {
+    val isUser = message.role == MessageRole.USER
     Row(
         Modifier.fillMaxWidth(),
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
@@ -195,12 +230,16 @@ private fun Bubble(message: UiMessage) {
             Column(Modifier.padding(12.dp)) {
                 // Markdown rendering lands at M4. Plain text until then,
                 // deliberately — re-parsing on every chunk is the jank trap.
-                Text(message.content, style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    overrideContent ?: message.content,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
 
                 val footer = buildList {
-                    if (!isUser) message.modelId?.let { add(it) }
-                    message.stats?.tokensPerSecond?.let { add("${it.toInt()} tok/s") }
-                    if (message.incomplete) add("incomplete")
+                    if (showModel) message.modelId?.let { add(it) }
+                    message.tokensPerSecond?.let { add("${it.toInt()} tok/s") }
+                    if (message.status == MessageStatus.INCOMPLETE) add("incomplete")
+                    if (message.status == MessageStatus.PENDING) add("queued")
                 }
                 if (footer.isNotEmpty()) {
                     Text(

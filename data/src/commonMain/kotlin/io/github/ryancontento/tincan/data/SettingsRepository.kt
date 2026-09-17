@@ -20,6 +20,10 @@ private object Keys {
     val numCtx = intPreferencesKey("num_ctx")
     val keepAlive = stringPreferencesKey("keep_alive")
     val loadingThreshold = longPreferencesKey("model_loading_threshold_millis")
+    val windowWidth = intPreferencesKey("window_width")
+    val windowHeight = intPreferencesKey("window_height")
+    val windowX = intPreferencesKey("window_x")
+    val windowY = intPreferencesKey("window_y")
 }
 
 /**
@@ -41,6 +45,12 @@ class SettingsRepository internal constructor(private val store: DataStore<Prefe
             keepAlive = prefs[Keys.keepAlive] ?: TinCanSettings.DEFAULT_KEEP_ALIVE,
             modelLoadingThresholdMillis = prefs[Keys.loadingThreshold]
                 ?: TinCanSettings.DEFAULT_LOADING_THRESHOLD_MILLIS,
+            window = WindowGeometry(
+                width = prefs[Keys.windowWidth],
+                height = prefs[Keys.windowHeight],
+                x = prefs[Keys.windowX],
+                y = prefs[Keys.windowY],
+            ),
         )
     }
 
@@ -66,12 +76,30 @@ class SettingsRepository internal constructor(private val store: DataStore<Prefe
         it[Keys.loadingThreshold] = millis.coerceAtLeast(0)
     }
 
+    /**
+     * Written on close rather than on every drag. A negative position means the
+     * window was on a monitor that is no longer attached, so it is dropped and
+     * the window centres again instead of opening off-screen.
+     */
+    suspend fun setWindowGeometry(width: Int, height: Int, x: Int, y: Int) = edit { prefs ->
+        prefs[Keys.windowWidth] = width.coerceAtLeast(MIN_WINDOW_DIMENSION)
+        prefs[Keys.windowHeight] = height.coerceAtLeast(MIN_WINDOW_DIMENSION)
+        if (x >= 0 && y >= 0) {
+            prefs[Keys.windowX] = x
+            prefs[Keys.windowY] = y
+        } else {
+            prefs.remove(Keys.windowX)
+            prefs.remove(Keys.windowY)
+        }
+    }
+
     private suspend fun edit(block: (androidx.datastore.preferences.core.MutablePreferences) -> Unit) {
         store.edit(block)
     }
 
     companion object {
         const val FILE_NAME = "settings.preferences_pb"
+        const val MIN_WINDOW_DIMENSION = 480
     }
 }
 
