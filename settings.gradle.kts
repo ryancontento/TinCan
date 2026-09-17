@@ -24,8 +24,6 @@ enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 rootProject.name = "TinCan"
 
 include(":app")
+include(":data")
 include(":llm-api")
 include(":llm-ollama")
-
-// :data lands at M3 (Room). Left out until there is something in it — an empty
-// module that does nothing is just a slower build.

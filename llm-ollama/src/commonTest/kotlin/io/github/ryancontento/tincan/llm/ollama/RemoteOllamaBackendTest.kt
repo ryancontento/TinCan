@@ -12,7 +12,11 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.http.HttpHeaders
 import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.writeStringUtf8
+import io.ktor.utils.io.writer
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -24,7 +28,7 @@ import kotlin.test.assertTrue
  * `curl http://localhost:11434/api/chat`, not hand-written. Hand-written
  * fixtures test your idea of the protocol rather than the protocol.
  */
-private const val COMPLETE_STREAM = """{"model":"llama3.2:1b","created_at":"2026-09-17T15:42:59.5670387Z","message":{"role":"assistant","content":"Hello"},"done":false}
+internal const val COMPLETE_STREAM = """{"model":"llama3.2:1b","created_at":"2026-09-17T15:42:59.5670387Z","message":{"role":"assistant","content":"Hello"},"done":false}
 {"model":"llama3.2:1b","created_at":"2026-09-17T15:42:59.7001801Z","message":{"role":"assistant","content":"."},"done":false}
 {"model":"llama3.2:1b","created_at":"2026-09-17T15:42:59.7420965Z","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","total_duration":30258609300,"load_duration":19906358300,"prompt_eval_count":29,"prompt_eval_cached_count":0,"prompt_eval_duration":10175903000,"eval_count":3,"eval_duration":173639000}
 """
@@ -60,7 +64,7 @@ private fun backendReturning(
     )
 }
 
-private fun request() = ChatRequest(
+internal fun request() = ChatRequest(
     model = "llama3.2:1b",
     messages = listOf(ChatMessage(Role.USER, "Say exactly: hello")),
 )
@@ -118,36 +122,5 @@ class RemoteOllamaBackendTest {
         val failed = assertIs<ChatEvent.Failed>(events.single())
         val error = assertIs<LlmError.Server>(failed.error)
         assertEquals(500, error.code)
-    }
-}
-
-class ModelLoadingInferenceTest {
-
-    @Test
-    fun reports_model_loading_when_first_token_is_slow() = runTest {
-        // runTest's virtual clock fast-forwards the delay, so any positive
-        // threshold fires deterministically without the test actually waiting.
-        val events = backendReturning(COMPLETE_STREAM, modelLoadingThresholdMillis = 2_500)
-            .chat(request()).toList()
-
-        assertTrue(
-            events.any { it is ChatEvent.ModelLoading },
-            "expected a ModelLoading event, got ${events.map { it::class.simpleName }}",
-        )
-    }
-
-    @Test
-    fun does_not_report_model_loading_when_the_server_returns_an_error() = runTest {
-        val events = backendReturning(
-            "upstream exploded",
-            HttpStatusCode.InternalServerError,
-            modelLoadingThresholdMillis = 2_500,
-        ).chat(request()).toList()
-
-        // A server that answers with a 500 is plainly not loading weights.
-        assertTrue(
-            events.none { it is ChatEvent.ModelLoading },
-            "ModelLoading must not fire on an error response",
-        )
     }
 }

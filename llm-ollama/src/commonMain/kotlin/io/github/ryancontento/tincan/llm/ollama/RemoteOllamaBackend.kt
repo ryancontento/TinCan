@@ -99,18 +99,9 @@ class RemoteOllamaBackend internal constructor(
 
         var sawFirstToken = false
 
-        // ModelLoading has no wire signal, so infer it from time-to-first-token.
-        // A threshold of zero or less disables the inference entirely, which is
-        // what tests want: runTest uses a virtual clock and fast-forwards every
-        // delay, so any positive threshold fires immediately under test.
-        val loadingWatcher = if (modelLoadingThresholdMillis > 0) {
-            launch {
-                delay(modelLoadingThresholdMillis)
-                if (!sawFirstToken) send(ChatEvent.ModelLoading)
-            }
-        } else {
-            null
-        }
+        // Captured so the loading watcher can be launched from inside execute,
+        // where `this` is the response rather than the producer scope.
+        val producer = this
 
         try {
             val body = OllamaChatRequest(
@@ -134,16 +125,36 @@ class RemoteOllamaBackend internal constructor(
                 setBody(body)
             }.execute { response ->
                 if (!response.status.isSuccess()) {
-                    // The server answered, so it is plainly not loading a model.
-                    loadingWatcher?.cancel()
                     val text = runCatching { response.bodyAsText() }.getOrNull()
                     send(ChatEvent.Failed(mapHttpError(response.status, text, request.model)))
                     return@execute
                 }
 
+                // ModelLoading has no wire signal — Ollama reports load_duration
+                // only in the final message — so it is inferred from
+                // time-to-first-token.
+                //
+                // The clock starts HERE, not when the request was sent. The
+                // server has accepted the request, so waiting now genuinely
+                // means it is loading weights; before this point, slowness is a
+                // connection problem and belongs to Unreachable. Starting it
+                // earlier also let the event fire on error responses, since a
+                // cancel afterwards races the timer.
+                //
+                // A threshold of zero or less disables the inference.
+                val loadingWatcher = if (modelLoadingThresholdMillis > 0) {
+                    producer.launch {
+                        delay(modelLoadingThresholdMillis)
+                        if (!sawFirstToken) send(ChatEvent.ModelLoading)
+                    }
+                } else {
+                    null
+                }
+
                 val channel = response.bodyAsChannel()
                 var stats: GenerationStats? = null
 
+                try {
                 while (!channel.isClosedForRead && isActive) {
                     val line = channel.readUTF8Line() ?: break
                     if (line.isBlank()) continue
@@ -183,13 +194,14 @@ class RemoteOllamaBackend internal constructor(
                     // partway. Whatever was already emitted stays valid.
                     else ChatEvent.Failed(LlmError.StreamInterrupted),
                 )
+                } finally {
+                    loadingWatcher?.cancel()
+                }
             }
         } catch (e: CancellationException) {
             throw e   // user pressed stop; leave the partial message clean
         } catch (e: Throwable) {
             send(ChatEvent.Failed(e.toLlmError()))
-        } finally {
-            loadingWatcher?.cancel()
         }
     }
 

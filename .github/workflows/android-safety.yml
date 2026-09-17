@@ -1,0 +1,71 @@
+name: Android safety
+
+# Guards the promise that makes v2 a port rather than a rewrite: shared code
+# must stay compilable against Android's API surface, not just the desktop JVM's.
+#
+# Without this, commonMain type-checks against the full JVM, so java.awt,
+# javax.swing and the wider java.nio.file API all compile happily — and Compose
+# Desktop actively tempts you toward them. The leak stays invisible until the day
+# the Android target is added, by which point there are a hundred of them.
+#
+# It runs in CI rather than locally because declaring androidTarget() needs the
+# Android SDK, and avoiding that is the whole point of the desktop-first order.
+# GitHub's ubuntu runners ship the SDK preinstalled, so the constraint is
+# enforced at no cost to local setup. Locally the target stays off and nothing
+# about `./gradlew run` changes.
+#
+# Scope: :llm-api and :llm-ollama only. Those two are pure commonMain by design
+# and must never gain a platform source set. :data is deliberately excluded —
+# it has a legitimate expect/actual for the app data directory whose Android
+# half arrives in v2, so it cannot compile for Android until then. :app is
+# excluded for the same reason: it needs an Activity and a manifest.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  android-target:
+    name: Shared modules compile for Android
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Compiles the shared code for Android without assembling an APK. A
+      # failure here means something Android-hostile reached common code, and
+      # it is meant to fail the build — do not soften it into a warning.
+      - name: Compile shared modules against Android
+        run: |
+          ./gradlew -Ptincan.android=true \
+            :llm-api:compileDebugKotlinAndroid \
+            :llm-ollama:compileDebugKotlinAndroid \
+            --stacktrace
+
+      # The other half of the same promise: these modules must have no platform
+      # source sets in their PRODUCTION code. A desktopMain/ or androidMain/
+      # folder means the seam has been broken, which the compile check above
+      # would not catch on its own.
+      #
+      # Test source sets are deliberately not included. desktopTest is legitimate
+      # and present: the model-loading timing tests need a real clock, because
+      # Ktor runs the response body on its own dispatcher and a virtual clock
+      # cannot order two schedulers it does not both control.
+      - name: Assert no platform source sets in the seam modules
+        run: |
+          leaked=$(find llm-api/src llm-ollama/src -maxdepth 1 -type d \
+            \( -name 'desktopMain' -o -name 'androidMain' -o -name 'jvmMain' \) -print)
+          if [ -n "$leaked" ]; then
+            echo "::error::Platform source sets found in modules that must stay commonMain-only:"
+            echo "$leaked"
+            exit 1
+          fi
+          echo "Seam modules are commonMain-only."
