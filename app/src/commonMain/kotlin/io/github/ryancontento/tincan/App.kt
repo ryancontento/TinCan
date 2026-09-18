@@ -1,13 +1,18 @@
 package io.github.ryancontento.tincan
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import io.github.ryancontento.tincan.chat.ChatScreen
+import io.github.ryancontento.tincan.data.SettingsRepository
+import io.github.ryancontento.tincan.data.TinCanSettings
 import io.github.ryancontento.tincan.settings.SettingsScreen
 import io.github.ryancontento.tincan.ui.TinCanTheme
 import kotlinx.serialization.Serializable
+import org.koin.compose.koinInject
 
 @Serializable
 object ChatRoute
@@ -27,7 +32,12 @@ object SettingsRoute
  */
 @Composable
 fun App() {
-    TinCanTheme {
+    // The theme is read here rather than through a view model: it wraps the
+    // navigation host, so it has to resolve before any screen composes.
+    val settingsRepository: SettingsRepository = koinInject()
+    val settings by settingsRepository.settings.collectAsState(initial = TinCanSettings())
+
+    TinCanTheme(settings.theme) {
         val navController = rememberNavController()
         NavHost(navController = navController, startDestination = ChatRoute) {
             composable<ChatRoute> {

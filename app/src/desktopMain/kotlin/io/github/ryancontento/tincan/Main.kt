@@ -9,6 +9,7 @@ import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import io.github.ryancontento.tincan.data.SettingsRepository
 import io.github.ryancontento.tincan.di.appModule
+import io.github.ryancontento.tincan.di.platformModule
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.koin.core.context.startKoin
@@ -28,7 +29,7 @@ fun main() {
     // Started here, not in App(): window size must be read before any composition
     // exists, and a second graph would mean a second DataStore over one file.
     // v2 does the same in Application.onCreate.
-    val koin = startKoin { modules(appModule()) }.koin
+    val koin = startKoin { modules(appModule(), platformModule()) }.koin
     val settings: SettingsRepository = koin.get()
 
     val saved = runBlocking {

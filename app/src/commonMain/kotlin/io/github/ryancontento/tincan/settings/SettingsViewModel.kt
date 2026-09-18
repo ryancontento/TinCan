@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.ryancontento.tincan.chat.describe
 import io.github.ryancontento.tincan.data.SettingsRepository
+import io.github.ryancontento.tincan.data.ThemePreference
 import io.github.ryancontento.tincan.data.TinCanSettings
 import io.github.ryancontento.tincan.llm.BackendHealth
 import io.github.ryancontento.tincan.llm.LlmBackendProvider
@@ -42,6 +43,7 @@ class SettingsViewModel(
     fun setServerUrl(value: String) = viewModelScope.launch { repository.setServerUrl(value) }
     fun setSystemPrompt(value: String) = viewModelScope.launch { repository.setSystemPrompt(value) }
     fun setKeepAlive(value: String) = viewModelScope.launch { repository.setKeepAlive(value) }
+    fun setTheme(value: ThemePreference) = viewModelScope.launch { repository.setTheme(value) }
 
     /** Blank clears the override and lets the server pick. */
     fun setNumCtx(raw: String) = viewModelScope.launch {
