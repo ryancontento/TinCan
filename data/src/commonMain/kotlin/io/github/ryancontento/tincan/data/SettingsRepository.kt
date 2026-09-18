@@ -11,10 +11,11 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.job
 import okio.Path.Companion.toPath
 
 private object Keys {
@@ -38,14 +39,22 @@ private object Keys {
  * changing a default later still reaches existing installs. */
 class SettingsRepository internal constructor(
     private val store: DataStore<Preferences>,
-    private val releaseFile: () -> Unit = {},
-) : AutoCloseable {
+    private val storeScope: CoroutineScope? = null,
+) {
 
     /**
-     * Releases the file so another instance may open it. Tests need it to
-     * simulate a relaunch; the app holds one repository for its whole life.
+     * Releases the file so another instance may open it, and waits for the
+     * release to land. Tests need it to simulate a relaunch; the app holds one
+     * repository for its whole life.
+     *
+     * Suspending rather than AutoCloseable, and joining rather than just
+     * cancelling, because DataStore only drops the file from its registry of
+     * open stores as the scope finishes completing. A reopen that does not wait
+     * races that cleanup — Windows won the race and Linux CI lost it.
      */
-    override fun close() = releaseFile()
+    suspend fun close() {
+        storeScope?.coroutineContext?.job?.cancelAndJoin()
+    }
 
     val settings: Flow<TinCanSettings> = store.data.map { prefs ->
         TinCanSettings(
@@ -158,6 +167,6 @@ fun createSettingsRepository(directory: String = appDataDir()): SettingsReposito
             scope = scope,
             produceFile = { "$directory/${SettingsRepository.FILE_NAME}".toPath() },
         ),
-        releaseFile = { scope.cancel() },
+        storeScope = scope,
     )
 }

@@ -16,13 +16,18 @@ class AppearanceSettingsTest {
             // Closing and reopening over the same folder is what a relaunch is.
             // DataStore refuses two instances on one file, so the close is the
             // part that makes this a real round trip rather than a cache read.
+            //
+            // Repeated, because releasing the file is asynchronous and a single
+            // pass hides the race: one platform wins it and another does not.
             settings.close()
-            val reopened = createSettingsRepository(dir.absolutePath)
-            val restored = reopened.settings.first()
-            reopened.close()
+            repeat(REOPEN_ATTEMPTS) {
+                val reopened = createSettingsRepository(dir.absolutePath)
+                val restored = reopened.settings.first()
+                reopened.close()
 
-            assertEquals(ThemePreference.LIGHT, restored.theme)
-            assertEquals(312, restored.sidebarWidth)
+                assertEquals(ThemePreference.LIGHT, restored.theme)
+                assertEquals(312, restored.sidebarWidth)
+            }
         }
     }
 
@@ -54,5 +59,9 @@ class AppearanceSettingsTest {
         assertEquals(ThemePreference.SYSTEM, themeFrom("SOLARIZED"))
         assertEquals(ThemePreference.SYSTEM, themeFrom(null))
         assertEquals(ThemePreference.LIGHT, themeFrom("LIGHT"))
+    }
+
+    private companion object {
+        const val REOPEN_ATTEMPTS = 20
     }
 }

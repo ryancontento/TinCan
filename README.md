@@ -76,6 +76,9 @@ llm-ollama/   Ktor implementation against Ollama's native /api/chat. commonMain 
 it that way — that's what makes the Android version a port rather than a
 rewrite. `.github/workflows/android-safety.yml` enforces it on every push.
 
+[docs/CODE-MAP.md](docs/CODE-MAP.md) says where each feature lives, and traces
+one message from keystroke to stored reply.
+
 ## Tests
 
 ```bash

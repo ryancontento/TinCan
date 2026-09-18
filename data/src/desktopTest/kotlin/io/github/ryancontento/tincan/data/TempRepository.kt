@@ -23,8 +23,8 @@ inline fun withRepo(block: (ChatRepository, File) -> Unit) {
     }
 }
 
-/** Same, for settings. Closed on the way out so the file can be reopened. */
-inline fun withSettings(block: (SettingsRepository, File) -> Unit) {
+/** Same, for settings. Suspend because releasing the file is asynchronous. */
+suspend inline fun withSettings(block: (SettingsRepository, File) -> Unit) {
     val dir = File(System.getProperty("java.io.tmpdir"), "tincan-settings-${UUID.randomUUID()}")
     dir.mkdirs()
     val settings = createSettingsRepository(dir.absolutePath)
