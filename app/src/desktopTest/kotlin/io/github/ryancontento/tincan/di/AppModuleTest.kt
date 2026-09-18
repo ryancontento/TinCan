@@ -3,6 +3,7 @@ package io.github.ryancontento.tincan.di
 import io.github.ryancontento.tincan.chat.ChatViewModel
 import io.github.ryancontento.tincan.data.ChatRepository
 import io.github.ryancontento.tincan.data.SettingsRepository
+import io.github.ryancontento.tincan.export.FileSaver
 import io.github.ryancontento.tincan.llm.LlmBackendProvider
 import io.github.ryancontento.tincan.settings.SettingsViewModel
 import kotlinx.coroutines.Dispatchers
@@ -51,11 +52,15 @@ class AppModuleTest {
 
     @Test
     fun every_definition_the_app_needs_actually_resolves() {
-        val koin = startKoin { modules(appModule(dir.absolutePath)) }.koin
+        val koin = startKoin { modules(appModule(dir.absolutePath), platformModule()) }.koin
 
         assertNotNull(koin.get<SettingsRepository>())
         assertNotNull(koin.get<ChatRepository>())
         assertNotNull(koin.get<LlmBackendProvider>())
+
+        // Bound only by the platform module, so a missing actual fails here
+        // rather than the first time someone clicks Export.
+        assertNotNull(koin.get<FileSaver>())
 
         // The two that broke. Resolving them is the whole point of this test.
         assertNotNull(koin.get<ChatViewModel>())
@@ -64,7 +69,7 @@ class AppModuleTest {
 
     @Test
     fun the_repositories_are_singletons_because_both_hold_exclusive_file_locks() {
-        val koin = startKoin { modules(appModule(dir.absolutePath)) }.koin
+        val koin = startKoin { modules(appModule(dir.absolutePath), platformModule()) }.koin
 
         // Room holds a file lock and DataStore refuses a second instance over
         // the same file, so a second copy of either would fail at runtime.

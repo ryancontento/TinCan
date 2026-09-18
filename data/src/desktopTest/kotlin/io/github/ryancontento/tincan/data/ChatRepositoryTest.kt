@@ -15,9 +15,9 @@ class ChatRepositoryTest {
 
     @Test
     fun a_conversation_round_trips_with_its_messages() = runTest {
-        withRepo { repo ->
-            val id = repo.createConversation("http://localhost:11434", "phi4", null)
-            repo.appendUserMessage(id, "hello", "http://localhost:11434")
+        withRepo { repo, _ ->
+            val id = repo.createConversation(TEST_SERVER, "phi4", null)
+            repo.appendUserMessage(id, "hello", TEST_SERVER)
 
             val messages = repo.observeMessages(id).first()
             assertEquals(1, messages.size)
@@ -28,8 +28,8 @@ class ChatRepositoryTest {
 
     @Test
     fun the_title_comes_from_the_first_message_but_never_overwrites_a_rename() = runTest {
-        withRepo { repo ->
-            val id = repo.createConversation("local", "phi4", null)
+        withRepo { repo, _ ->
+            val id = repo.createConversation(TEST_SERVER, "phi4", null)
             repo.titleFromFirstMessageIfUnset(id, "Explain memory bandwidth\nand why it matters")
 
             // Only the first line, so a pasted essay does not become the title.
@@ -49,9 +49,9 @@ class ChatRepositoryTest {
 
     @Test
     fun a_streamed_reply_accumulates_and_then_records_its_stats() = runTest {
-        withRepo { repo ->
-            val id = repo.createConversation("local", "phi4", null)
-            val msg = repo.beginAssistantMessage(id, "phi4", "local")
+        withRepo { repo, _ ->
+            val id = repo.createConversation(TEST_SERVER, "phi4", null)
+            val msg = repo.beginAssistantMessage(id, "phi4", TEST_SERVER)
 
             assertEquals(MessageStatus.STREAMING, repo.observeMessages(id).first().single().status)
 
@@ -76,9 +76,9 @@ class ChatRepositoryTest {
 
     @Test
     fun orphaned_streaming_rows_are_demoted_on_startup() = runTest {
-        withRepo { repo ->
-            val id = repo.createConversation("local", "phi4", null)
-            val msg = repo.beginAssistantMessage(id, "phi4", "local")
+        withRepo { repo, _ ->
+            val id = repo.createConversation(TEST_SERVER, "phi4", null)
+            val msg = repo.beginAssistantMessage(id, "phi4", TEST_SERVER)
             repo.updateStreamingBody(msg, "half a rep", null)
 
             // Simulates the process dying mid-generation: the row is left
@@ -96,9 +96,9 @@ class ChatRepositoryTest {
 
     @Test
     fun deleting_a_conversation_takes_its_messages_with_it() = runTest {
-        withRepo { repo ->
-            val id = repo.createConversation("local", "phi4", null)
-            repo.appendUserMessage(id, "hello", "local")
+        withRepo { repo, _ ->
+            val id = repo.createConversation(TEST_SERVER, "phi4", null)
+            repo.appendUserMessage(id, "hello", TEST_SERVER)
             repo.deleteConversation(id)
 
             // Cascade, not an orphaned row — enforced by the foreign key.
@@ -109,11 +109,11 @@ class ChatRepositoryTest {
 
     @Test
     fun history_excludes_failed_turns_so_errors_do_not_poison_context() = runTest {
-        withRepo { repo ->
-            val id = repo.createConversation("local", "phi4", null)
-            repo.appendUserMessage(id, "hello", "local")
+        withRepo { repo, _ ->
+            val id = repo.createConversation(TEST_SERVER, "phi4", null)
+            repo.appendUserMessage(id, "hello", TEST_SERVER)
 
-            val failed = repo.beginAssistantMessage(id, "phi4", "local")
+            val failed = repo.beginAssistantMessage(id, "phi4", TEST_SERVER)
             repo.finishAssistantMessage(
                 messageId = failed,
                 conversationId = id,
@@ -131,9 +131,9 @@ class ChatRepositoryTest {
 
     @Test
     fun a_reply_that_produced_nothing_leaves_no_empty_bubble() = runTest {
-        withRepo { repo ->
-            val id = repo.createConversation("local", "phi4", null)
-            val msg = repo.beginAssistantMessage(id, "phi4", "local")
+        withRepo { repo, _ ->
+            val id = repo.createConversation(TEST_SERVER, "phi4", null)
+            val msg = repo.beginAssistantMessage(id, "phi4", TEST_SERVER)
             repo.discardMessage(msg)
 
             assertTrue(repo.observeMessages(id).first().isEmpty())
@@ -142,14 +142,14 @@ class ChatRepositoryTest {
 
     @Test
     fun each_message_records_the_model_that_produced_it() = runTest {
-        withRepo { repo ->
-            val id = repo.createConversation("local", "phi4", null)
+        withRepo { repo, _ ->
+            val id = repo.createConversation(TEST_SERVER, "phi4", null)
 
-            val first = repo.beginAssistantMessage(id, "phi4", "local")
+            val first = repo.beginAssistantMessage(id, "phi4", TEST_SERVER)
             repo.finishAssistantMessage(first, id, "from phi4", MessageStatus.COMPLETE, null, null)
 
             // Switching models mid-thread must not rewrite what came before.
-            val second = repo.beginAssistantMessage(id, "qwen3:8b", "local")
+            val second = repo.beginAssistantMessage(id, "qwen3:8b", TEST_SERVER)
             repo.finishAssistantMessage(second, id, "from qwen", MessageStatus.COMPLETE, null, null)
 
             val models = repo.observeMessages(id).first().map { it.modelId }
@@ -159,9 +159,9 @@ class ChatRepositoryTest {
 
     @Test
     fun a_user_message_records_no_model_because_nothing_generated_it() = runTest {
-        withRepo { repo ->
-            val id = repo.createConversation("local", "phi4", null)
-            repo.appendUserMessage(id, "hello", "local")
+        withRepo { repo, _ ->
+            val id = repo.createConversation(TEST_SERVER, "phi4", null)
+            repo.appendUserMessage(id, "hello", TEST_SERVER)
             assertNull(repo.observeMessages(id).first().single().modelId)
         }
     }

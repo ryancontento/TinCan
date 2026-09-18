@@ -1,33 +1,45 @@
 package io.github.ryancontento.tincan.data
 
+import io.github.ryancontento.tincan.data.db.DATABASE_FILE_NAME
 import java.io.File
 import java.util.UUID
 
 /**
- * Runs [block] against a repository on a throwaway database.
+ * Runs [block] against a repository on a throwaway database, handing over its
+ * directory so a test can inspect the files themselves.
  *
  * One directory per call: Room holds a file lock, so a shared path deadlocks
  * rather than failing cleanly.
  */
-inline fun withRepo(block: (ChatRepository) -> Unit) {
+inline fun withRepo(block: (ChatRepository, File) -> Unit) {
     val dir = File(System.getProperty("java.io.tmpdir"), "tincan-test-${UUID.randomUUID()}")
     dir.mkdirs()
     val repo = createChatRepository(dir.absolutePath)
     try {
-        block(repo)
+        block(repo, dir)
     } finally {
         repo.close()
         dir.deleteRecursively()
     }
 }
 
-/** Same, for settings. */
+/** Same, for settings. Closed on the way out so the file can be reopened. */
 inline fun withSettings(block: (SettingsRepository, File) -> Unit) {
     val dir = File(System.getProperty("java.io.tmpdir"), "tincan-settings-${UUID.randomUUID()}")
     dir.mkdirs()
+    val settings = createSettingsRepository(dir.absolutePath)
     try {
-        block(createSettingsRepository(dir.absolutePath), dir)
+        block(settings, dir)
     } finally {
+        settings.close()
         dir.deleteRecursively()
     }
 }
+
+/** Stands in for a derived key where the test does not care which server. */
+val TEST_SERVER = ServerKey("srv-test")
+
+/** True if [text] survives anywhere in the database files, free pages included. */
+fun File.databaseContains(text: String): Boolean =
+    listFiles().orEmpty().filter { it.name.startsWith(DATABASE_FILE_NAME) }
+        .any { it.readBytes().toString(Charsets.ISO_8859_1).contains(text) }

@@ -1,10 +1,13 @@
 package io.github.ryancontento.tincan.data
 
+import androidx.room.execSQL
+import androidx.room.useWriterConnection
 import io.github.ryancontento.tincan.data.db.ChatDao
 import io.github.ryancontento.tincan.data.db.ConversationEntity
 import io.github.ryancontento.tincan.data.db.MessageEntity
 import io.github.ryancontento.tincan.data.db.MessageRole
 import io.github.ryancontento.tincan.data.db.MessageStatus
+import io.github.ryancontento.tincan.data.db.SearchHit
 import io.github.ryancontento.tincan.data.db.createDatabase
 import io.github.ryancontento.tincan.llm.ChatMessage
 import io.github.ryancontento.tincan.llm.GenerationStats
@@ -20,6 +23,7 @@ import kotlin.time.ExperimentalTime
 @OptIn(ExperimentalTime::class)
 class ChatRepository internal constructor(
     private val dao: ChatDao,
+    private val rewriteFile: suspend () -> Unit = {},
     private val closeDatabase: () -> Unit = {},
 ) : AutoCloseable {
 
@@ -34,8 +38,26 @@ class ChatRepository internal constructor(
     /** Startup: rows left STREAMING belong to a dead process and will never finish. */
     suspend fun recoverInterruptedMessages() = dao.demoteOrphanedStreamingMessages()
 
+    /**
+     * Startup: replaces server addresses written by earlier versions with their
+     * keys, so no upgrade path leaves hostnames sitting in the transcript.
+     * Rows already holding a key are left alone, so this is cheap to re-run.
+     */
+    suspend fun redactStoredServerAddresses(keyFor: suspend (String) -> ServerKey) {
+        val addresses = dao.distinctBackendIds().filter { ServerKey.looksLikeAddress(it) }
+        if (addresses.isEmpty()) return
+
+        addresses.forEach { address ->
+            val key = keyFor(address).value
+            dao.replaceConversationBackendId(address, key)
+            dao.replaceMessageBackendId(address, key)
+        }
+        // An UPDATE only supersedes the old bytes; this removes them.
+        rewriteFile()
+    }
+
     suspend fun createConversation(
-        backendId: String,
+        serverKey: ServerKey,
         defaultModelId: String?,
         systemPrompt: String?,
     ): Long {
@@ -44,7 +66,7 @@ class ChatRepository internal constructor(
             ConversationEntity(
                 title = UNTITLED,
                 defaultModelId = defaultModelId,
-                backendId = backendId,
+                backendId = serverKey.value,
                 systemPrompt = systemPrompt,
                 createdAt = now,
                 updatedAt = now,
@@ -54,8 +76,14 @@ class ChatRepository internal constructor(
 
     suspend fun deleteConversation(id: Long) = dao.deleteConversation(id)
 
+    suspend fun conversation(id: Long): ConversationEntity? = dao.conversation(id)
+
     suspend fun setDefaultModel(conversationId: Long, modelId: String?) =
         dao.setDefaultModel(conversationId, modelId, now())
+
+    /** Null restores the global default; empty means this thread has no prompt. */
+    suspend fun setSystemPrompt(conversationId: Long, prompt: String?) =
+        dao.setSystemPrompt(conversationId, prompt, now())
 
     suspend fun renameConversation(id: Long, title: String) =
         dao.renameConversation(id, title.ifBlank { UNTITLED }, now())
@@ -70,7 +98,7 @@ class ChatRepository internal constructor(
         dao.renameConversation(conversationId, title, now())
     }
 
-    suspend fun appendUserMessage(conversationId: Long, content: String, backendId: String): Long =
+    suspend fun appendUserMessage(conversationId: Long, content: String, serverKey: ServerKey): Long =
         dao.insertMessage(
             MessageEntity(
                 conversationId = conversationId,
@@ -78,7 +106,7 @@ class ChatRepository internal constructor(
                 content = content,
                 thinking = null,
                 modelId = null,
-                backendId = backendId,
+                backendId = serverKey.value,
                 status = MessageStatus.COMPLETE,
                 errorCode = null,
                 promptTokens = null,
@@ -89,7 +117,7 @@ class ChatRepository internal constructor(
         )
 
     /** Creates the row the streaming reply will be written into. */
-    suspend fun beginAssistantMessage(conversationId: Long, modelId: String, backendId: String): Long =
+    suspend fun beginAssistantMessage(conversationId: Long, modelId: String, serverKey: ServerKey): Long =
         dao.insertMessage(
             MessageEntity(
                 conversationId = conversationId,
@@ -97,7 +125,7 @@ class ChatRepository internal constructor(
                 content = "",
                 thinking = null,
                 modelId = modelId,
-                backendId = backendId,
+                backendId = serverKey.value,
                 status = MessageStatus.STREAMING,
                 errorCode = null,
                 promptTokens = null,
@@ -133,6 +161,28 @@ class ChatRepository internal constructor(
     /** Drops an assistant row that produced nothing, so a failure leaves no empty bubble. */
     suspend fun discardMessage(messageId: Long) = dao.deleteMessage(messageId)
 
+    /** Puts a discarded reply back. It returns with a new id; nothing referenced the old one. */
+    suspend fun restoreMessage(message: MessageEntity): Long = dao.insertMessage(message.copy(id = 0))
+
+    /** Every message the conversation holds, oldest first. Used for export. */
+    suspend fun messages(conversationId: Long): List<MessageEntity> = dao.messages(conversationId)
+
+    /**
+     * Rewinds the transcript to just before [messageId], which is what both
+     * regenerating a reply and editing a question need: the model must not see
+     * the turns it is about to replace.
+     */
+    suspend fun truncateFrom(conversationId: Long, messageId: Long) =
+        dao.deleteMessagesFrom(conversationId, messageId)
+
+    /** The last reply, whatever its state — the one a regenerate would replace. */
+    suspend fun lastAssistantMessage(conversationId: Long): MessageEntity? =
+        dao.messages(conversationId).lastOrNull()?.takeIf { it.role == MessageRole.ASSISTANT }
+
+    /** Blank terms return nothing rather than every message ever sent. */
+    suspend fun search(term: String, limit: Int = SEARCH_LIMIT): List<SearchHit> =
+        if (term.isBlank()) emptyList() else dao.searchMessages(escapeForLike(term.trim()), limit)
+
     /** Composed but not delivered — already on disk, so it is queued, not lost. */
     suspend fun markPending(messageId: Long) = dao.setMessageStatus(messageId, MessageStatus.PENDING)
 
@@ -163,8 +213,16 @@ class ChatRepository internal constructor(
     companion object {
         const val UNTITLED = "New conversation"
         private const val TITLE_MAX_CHARS = 60
+        private const val SEARCH_LIMIT = 100
     }
 }
+
+/**
+ * Neutralises LIKE's own wildcards, so searching for "50%" finds the text
+ * rather than matching everything. Paired with `ESCAPE '\'` in the query.
+ */
+internal fun escapeForLike(term: String): String =
+    term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 fun MessageRole.toDomain(): Role = when (this) {
     MessageRole.USER -> Role.USER
@@ -175,5 +233,16 @@ fun MessageRole.toDomain(): Role = when (this) {
 /** Room stays out of the public API so consumers never get androidx.room on their classpath. */
 fun createChatRepository(directory: String = appDataDir()): ChatRepository {
     val database = createDatabase(directory)
-    return ChatRepository(database.chatDao()) { database.close() }
+    return ChatRepository(
+        dao = database.chatDao(),
+        rewriteFile = {
+            database.useWriterConnection { connection ->
+                // Rebuilds every page, so superseded rows stop sitting in free space.
+                connection.execSQL("VACUUM")
+                // Then flush and truncate the log, which still holds the old copies.
+                connection.execSQL("PRAGMA wal_checkpoint(TRUNCATE)")
+            }
+        },
+        closeDatabase = { database.close() },
+    )
 }

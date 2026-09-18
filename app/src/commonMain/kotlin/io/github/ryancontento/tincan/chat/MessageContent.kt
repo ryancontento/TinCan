@@ -1,19 +1,17 @@
 package io.github.ryancontento.tincan.chat
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -30,6 +28,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.ColumnScope
+import io.github.ryancontento.tincan.ui.TinToolbarButton
 import com.mikepenz.markdown.compose.components.MarkdownComponentModel
 import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.m3.Markdown
@@ -102,11 +101,12 @@ fun CodeBlock(
     Column(
         modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(6.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant),
+            .clip(MaterialTheme.shapes.small)
+            .background(MaterialTheme.colorScheme.surface)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.small),
     ) {
         Row(
-            Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 2.dp),
+            Modifier.fillMaxWidth().padding(start = 10.dp, end = 2.dp, top = 1.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -115,22 +115,20 @@ fun CodeBlock(
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            TextButton(onClick = {
-                clipboard.setText(AnnotatedString(code))
-                copied = true
-            }) {
-                Text(if (copied) "Copied" else "Copy", style = MaterialTheme.typography.labelSmall)
-            }
+            TinToolbarButton(
+                onClick = { clipboard.setText(AnnotatedString(code)); copied = true },
+                label = if (copied) "Copied" else "Copy",
+            )
         }
         Text(
             text = code,
             style = LocalTextStyle.current.copy(
                 fontFamily = FontFamily.Monospace,
-                fontSize = 13.sp,
+                fontSize = 12.5.sp,
             ),
             modifier = Modifier
                 .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+                .padding(start = 10.dp, end = 10.dp, top = 2.dp, bottom = 8.dp),
         )
     }
 }
@@ -148,20 +146,15 @@ fun ReasoningTrace(
     var expanded by remember { mutableStateOf(false) }
 
     Column(modifier.fillMaxWidth().padding(bottom = 6.dp)) {
-        TextButton(
+        TinToolbarButton(
             onClick = { expanded = !expanded },
-            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-        ) {
-            Text(
-                text = when {
-                    expanded -> "Hide reasoning"
-                            // The only sign of life before the first visible token.
-                    isStreaming -> "Thinking…"
-                    else -> "Show reasoning"
-                },
-                style = MaterialTheme.typography.labelSmall,
-            )
-        }
+            label = when {
+                expanded -> "Hide reasoning"
+                // The only sign of life before the first visible token.
+                isStreaming -> "Thinking…"
+                else -> "Show reasoning"
+            },
+        )
         if (expanded) {
             Text(
                 thinking,
@@ -169,9 +162,9 @@ fun ReasoningTrace(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(6.dp))
+                    .clip(MaterialTheme.shapes.small)
                     .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .padding(10.dp),
+                    .padding(9.dp),
             )
         }
     }

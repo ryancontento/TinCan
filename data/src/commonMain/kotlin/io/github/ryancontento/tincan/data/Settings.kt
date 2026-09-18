@@ -2,6 +2,17 @@ package io.github.ryancontento.tincan.data
 
 import io.github.ryancontento.tincan.llm.GenerationOptions
 
+/** SYSTEM defers to the desktop's own setting, which each platform reports differently. */
+enum class ThemePreference { SYSTEM, LIGHT, DARK }
+
+/**
+ * Stored by name, and an unknown one falls back. A value written by a newer
+ * build must not stop an older one starting, which is what matching by ordinal
+ * or by valueOf() would do.
+ */
+internal fun themeFrom(name: String?): ThemePreference =
+    ThemePreference.entries.firstOrNull { it.name == name } ?: ThemePreference.SYSTEM
+
 /** Null means never saved; the window centres itself. */
 data class WindowGeometry(
     val width: Int? = null,
@@ -22,6 +33,9 @@ data class TinCanSettings(
     val keepAlive: String = DEFAULT_KEEP_ALIVE,
     /** Time-to-first-token before claiming "loading". GPU and CPU differ hugely. */
     val modelLoadingThresholdMillis: Long = DEFAULT_LOADING_THRESHOLD_MILLIS,
+    val theme: ThemePreference = ThemePreference.SYSTEM,
+    /** In dp. Layout inside the window, so it is not part of [window]. */
+    val sidebarWidth: Int = DEFAULT_SIDEBAR_WIDTH,
     val window: WindowGeometry = WindowGeometry(),
 ) {
     fun toGenerationOptions() = GenerationOptions(
@@ -34,5 +48,8 @@ data class TinCanSettings(
         const val DEFAULT_SERVER_URL = "http://localhost:11434"
         const val DEFAULT_KEEP_ALIVE = "10m"
         const val DEFAULT_LOADING_THRESHOLD_MILLIS = 2_500L
+        const val DEFAULT_SIDEBAR_WIDTH = 230
+        const val MIN_SIDEBAR_WIDTH = 170
+        const val MAX_SIDEBAR_WIDTH = 400
     }
 }

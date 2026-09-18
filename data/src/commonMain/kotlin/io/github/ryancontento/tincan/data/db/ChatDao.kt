@@ -30,6 +30,9 @@ interface ChatDao {
     @Query("UPDATE conversations SET defaultModelId = :modelId, updatedAt = :at WHERE id = :id")
     suspend fun setDefaultModel(id: Long, modelId: String?, at: Long)
 
+    @Query("UPDATE conversations SET systemPrompt = :prompt, updatedAt = :at WHERE id = :id")
+    suspend fun setSystemPrompt(id: Long, prompt: String?, at: Long)
+
     @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY createdAt ASC, id ASC")
     fun observeMessages(conversationId: Long): Flow<List<MessageEntity>>
 
@@ -92,6 +95,31 @@ interface ChatDao {
     suspend fun deleteMessage(id: Long)
 
     /**
+     * Drops a message and everything after it. Ids autoincrement, so within one
+     * conversation they run in the same order the transcript is read in.
+     */
+    @Query("DELETE FROM messages WHERE conversationId = :conversationId AND id >= :fromMessageId")
+    suspend fun deleteMessagesFrom(conversationId: Long, fromMessageId: Long)
+
+    /**
+     * LIKE rather than an FTS table: at one person's history it is instant, and
+     * it costs no schema version, no migration and no shadow table to keep in
+     * sync. Revisit if a transcript ever gets big enough to notice.
+     */
+    @Query(
+        """
+        SELECT m.id AS messageId, m.conversationId AS conversationId, c.title AS conversationTitle,
+               m.role AS role, m.content AS content, m.createdAt AS createdAt
+        FROM messages m
+        JOIN conversations c ON c.id = m.conversationId
+        WHERE m.content LIKE '%' || :term || '%' ESCAPE '\'
+        ORDER BY m.createdAt DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun searchMessages(term: String, limit: Int): List<SearchHit>
+
+    /**
      * Anything left mid-flight when the process died is not coming back, so it
      * is demoted to INCOMPLETE at startup. Without this, a crash during
      * generation would leave a row claiming to be STREAMING forever and the UI
@@ -99,4 +127,20 @@ interface ChatDao {
      */
     @Query("UPDATE messages SET status = 'INCOMPLETE' WHERE status = 'STREAMING'")
     suspend fun demoteOrphanedStreamingMessages()
+
+    /** Distinct backend values across both tables, for the address sweep at startup. */
+    @Query(
+        """
+        SELECT DISTINCT backendId FROM conversations
+        UNION
+        SELECT DISTINCT backendId FROM messages WHERE backendId IS NOT NULL
+        """,
+    )
+    suspend fun distinctBackendIds(): List<String>
+
+    @Query("UPDATE conversations SET backendId = :to WHERE backendId = :from")
+    suspend fun replaceConversationBackendId(from: String, to: String)
+
+    @Query("UPDATE messages SET backendId = :to WHERE backendId = :from")
+    suspend fun replaceMessageBackendId(from: String, to: String)
 }
