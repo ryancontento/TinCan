@@ -8,7 +8,12 @@ import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import okio.Path.Companion.toPath
 
@@ -24,11 +29,23 @@ private object Keys {
     val windowHeight = intPreferencesKey("window_height")
     val windowX = intPreferencesKey("window_x")
     val windowY = intPreferencesKey("window_y")
+    val serverKeySalt = stringPreferencesKey("server_key_salt")
+    val theme = stringPreferencesKey("theme")
+    val sidebarWidth = intPreferencesKey("sidebar_width")
 }
 
 /** Absent keys fall back to defaults rather than being written eagerly, so
  * changing a default later still reaches existing installs. */
-class SettingsRepository internal constructor(private val store: DataStore<Preferences>) {
+class SettingsRepository internal constructor(
+    private val store: DataStore<Preferences>,
+    private val releaseFile: () -> Unit = {},
+) : AutoCloseable {
+
+    /**
+     * Releases the file so another instance may open it. Tests need it to
+     * simulate a relaunch; the app holds one repository for its whole life.
+     */
+    override fun close() = releaseFile()
 
     val settings: Flow<TinCanSettings> = store.data.map { prefs ->
         TinCanSettings(
@@ -40,6 +57,8 @@ class SettingsRepository internal constructor(private val store: DataStore<Prefe
             keepAlive = prefs[Keys.keepAlive] ?: TinCanSettings.DEFAULT_KEEP_ALIVE,
             modelLoadingThresholdMillis = prefs[Keys.loadingThreshold]
                 ?: TinCanSettings.DEFAULT_LOADING_THRESHOLD_MILLIS,
+            theme = themeFrom(prefs[Keys.theme]),
+            sidebarWidth = prefs[Keys.sidebarWidth] ?: TinCanSettings.DEFAULT_SIDEBAR_WIDTH,
             window = WindowGeometry(
                 width = prefs[Keys.windowWidth],
                 height = prefs[Keys.windowHeight],
@@ -71,6 +90,14 @@ class SettingsRepository internal constructor(private val store: DataStore<Prefe
         it[Keys.loadingThreshold] = millis.coerceAtLeast(0)
     }
 
+    suspend fun setTheme(value: ThemePreference) = edit { it[Keys.theme] = value.name }
+
+    /** Clamped here as well as in the drag handle, so a stored value cannot hide the rail. */
+    suspend fun setSidebarWidth(dp: Int) = edit {
+        it[Keys.sidebarWidth] =
+            dp.coerceIn(TinCanSettings.MIN_SIDEBAR_WIDTH, TinCanSettings.MAX_SIDEBAR_WIDTH)
+    }
+
     /** A negative position means a detached monitor; drop it so the window centres. */
     suspend fun setWindowGeometry(width: Int, height: Int, x: Int, y: Int) = edit { prefs ->
         prefs[Keys.windowWidth] = width.coerceAtLeast(MIN_WINDOW_DIMENSION)
@@ -82,6 +109,22 @@ class SettingsRepository internal constructor(private val store: DataStore<Prefe
             prefs.remove(Keys.windowX)
             prefs.remove(Keys.windowY)
         }
+    }
+
+    /**
+     * The identifier stored on rows for [url]. Deliberately not part of
+     * [settings]: the salt is not a preference and must never reach the UI.
+     */
+    suspend fun serverKeyFor(url: String): ServerKey = ServerKey.derive(url, salt())
+
+    /** Read-or-create inside one edit, so concurrent callers agree on the value. */
+    private suspend fun salt(): String {
+        store.data.first()[Keys.serverKeySalt]?.let { return it }
+        var salt = ""
+        store.edit { prefs ->
+            salt = prefs[Keys.serverKeySalt] ?: ServerKey.newSalt().also { prefs[Keys.serverKeySalt] = it }
+        }
+        return salt
     }
 
     private suspend fun edit(block: (androidx.datastore.preferences.core.MutablePreferences) -> Unit) {
@@ -105,9 +148,16 @@ class SettingsRepository internal constructor(private val store: DataStore<Prefe
  * The directory is a parameter so tests can point at a temp folder instead of
  * the user's real settings.
  */
-fun createSettingsRepository(directory: String = appDataDir()): SettingsRepository =
-    SettingsRepository(
-        PreferenceDataStoreFactory.createWithPath(
+fun createSettingsRepository(directory: String = appDataDir()): SettingsRepository {
+    // An owned scope rather than the default one: DataStore keeps the file
+    // locked until its scope is cancelled, so without this nothing can ever
+    // hand the file back.
+    val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    return SettingsRepository(
+        store = PreferenceDataStoreFactory.createWithPath(
+            scope = scope,
             produceFile = { "$directory/${SettingsRepository.FILE_NAME}".toPath() },
         ),
+        releaseFile = { scope.cancel() },
     )
+}

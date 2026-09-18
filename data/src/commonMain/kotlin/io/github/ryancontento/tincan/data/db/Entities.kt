@@ -12,6 +12,7 @@ data class ConversationEntity(
     val title: String,
     /** Default for the next reply, never a constraint. */
     val defaultModelId: String?,
+    /** An opaque `ServerKey`, never an address. */
     val backendId: String,
     val systemPrompt: String?,
     val createdAt: Long,
@@ -20,7 +21,8 @@ data class ConversationEntity(
 
 /**
  * Model is recorded per message, not per conversation, so switching mid-thread
- * is lossless and the UI can mark where it changed. Same for [backendId].
+ * is lossless and the UI can mark where it changed. Same for [backendId], which
+ * holds an opaque `ServerKey` rather than the address it was derived from.
  */
 @Entity(
     tableName = "messages",
@@ -69,3 +71,13 @@ class Converters {
     fun stringToStatus(value: String): MessageStatus =
         MessageStatus.entries.firstOrNull { it.name == value } ?: MessageStatus.COMPLETE
 }
+
+/** One search result: the matching message plus the conversation it lives in. */
+data class SearchHit(
+    val messageId: Long,
+    val conversationId: Long,
+    val conversationTitle: String,
+    val role: MessageRole,
+    val content: String,
+    val createdAt: Long,
+)
