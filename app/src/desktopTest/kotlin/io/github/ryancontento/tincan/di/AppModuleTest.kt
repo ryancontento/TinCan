@@ -6,6 +6,7 @@ import io.github.ryancontento.tincan.data.SettingsRepository
 import io.github.ryancontento.tincan.export.FileSaver
 import io.github.ryancontento.tincan.llm.LlmBackendProvider
 import io.github.ryancontento.tincan.settings.SettingsViewModel
+import io.github.ryancontento.tincan.stop
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
@@ -63,8 +64,13 @@ class AppModuleTest {
         assertNotNull(koin.get<FileSaver>())
 
         // The two that broke. Resolving them is the whole point of this test.
-        assertNotNull(koin.get<ChatViewModel>())
-        assertNotNull(koin.get<SettingsViewModel>())
+        val chatViewModel = assertNotNull(koin.get<ChatViewModel>())
+        val settingsViewModel = assertNotNull(koin.get<SettingsViewModel>())
+
+        // Resolving a view model starts its collectors, and tearDown is about to
+        // take Dispatchers.Main away from them.
+        chatViewModel.stop()
+        settingsViewModel.stop()
     }
 
     @Test

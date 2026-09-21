@@ -14,6 +14,7 @@ import io.github.ryancontento.tincan.llm.LlmBackend
 import io.github.ryancontento.tincan.llm.LlmBackendProvider
 import io.github.ryancontento.tincan.llm.LlmError
 import io.github.ryancontento.tincan.llm.ModelInfo
+import io.github.ryancontento.tincan.stop
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -88,6 +89,7 @@ class OfflineQueueTest {
         .also { it.mkdirs() }
     private val chat: ChatRepository = createChatRepository(dir.absolutePath)
     private val settings: SettingsRepository = createSettingsRepository(dir.absolutePath)
+    private val running = mutableListOf<ChatViewModel>()
 
     // viewModelScope runs on Dispatchers.Main.immediate, which does not exist in
     // a plain JVM test — without a Main dispatcher nothing in init ever runs.
@@ -96,6 +98,9 @@ class OfflineQueueTest {
 
     @AfterTest
     fun cleanUp() {
+        // Before resetMain, or their collectors reach for a dispatcher that is
+        // no longer there and fail whichever test is running by then.
+        running.forEach { it.stop() }
         Dispatchers.resetMain()
         chat.close()
         dir.deleteRecursively()
@@ -104,6 +109,7 @@ class OfflineQueueTest {
     private suspend fun viewModel(backend: FakeBackend): ChatViewModel {
         settings.setSelectedModel("phi4")
         return ChatViewModel(settings, chat, backend, reconnectPollMillis = POLL_MILLIS)
+            .also { running += it }
     }
 
     /** Waits for the view model to reach a state, rather than guessing at timing. */

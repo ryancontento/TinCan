@@ -4,6 +4,7 @@ import io.github.ryancontento.tincan.data.ChatRepository
 import io.github.ryancontento.tincan.data.SettingsRepository
 import io.github.ryancontento.tincan.data.createChatRepository
 import io.github.ryancontento.tincan.data.createSettingsRepository
+import io.github.ryancontento.tincan.stop
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -32,16 +33,24 @@ class NewConversationTest {
         .also { it.mkdirs() }
     private val chat: ChatRepository = createChatRepository(dir.absolutePath)
     private val settings: SettingsRepository = createSettingsRepository(dir.absolutePath)
+    private val running = mutableListOf<ChatViewModel>()
 
     @BeforeTest
     fun installMainDispatcher() = Dispatchers.setMain(Dispatchers.Default)
 
     @AfterTest
     fun cleanUp() {
+        // Before resetMain, or their collectors reach for a dispatcher that is
+        // no longer there and fail whichever test is running by then.
+        running.forEach { it.stop() }
         Dispatchers.resetMain()
         chat.close()
         dir.deleteRecursively()
     }
+
+    private fun viewModel(backend: RecordingBackend): ChatViewModel =
+        ChatViewModel(settings, chat, backend, reconnectPollMillis = POLL_MILLIS)
+            .also { running += it }
 
     private suspend fun ChatViewModel.await(predicate: (ChatUiState) -> Boolean): ChatUiState =
         withTimeout(TIMEOUT_MILLIS) { state.first(predicate) }
@@ -50,7 +59,7 @@ class NewConversationTest {
     fun a_second_conversation_keeps_its_own_messages() = runBlocking {
         val backend = RecordingBackend()
         settings.setSelectedModel("phi4")
-        val vm = ChatViewModel(settings, chat, backend, reconnectPollMillis = POLL_MILLIS)
+        val vm = viewModel(backend)
         vm.await { it.connection == ConnectionState.ONLINE }
 
         vm.send("first thread")
@@ -76,12 +85,12 @@ class NewConversationTest {
     fun the_last_conversation_still_reopens_on_launch() = runBlocking {
         val backend = RecordingBackend()
         settings.setSelectedModel("phi4")
-        val first = ChatViewModel(settings, chat, backend, reconnectPollMillis = POLL_MILLIS)
+        val first = viewModel(backend)
         first.await { it.connection == ConnectionState.ONLINE }
         first.send("something worth resuming")
         val saved = first.await { it.messages.size == 2 && !it.isGenerating }
 
-        val relaunched = ChatViewModel(settings, chat, backend, reconnectPollMillis = POLL_MILLIS)
+        val relaunched = viewModel(backend)
         val restored = relaunched.await { it.activeConversationId != null && it.messages.isNotEmpty() }
 
         assertEquals(saved.activeConversationId, restored.activeConversationId)

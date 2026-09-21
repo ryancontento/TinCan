@@ -15,6 +15,7 @@ import io.github.ryancontento.tincan.llm.LlmBackendProvider
 import io.github.ryancontento.tincan.llm.LlmError
 import io.github.ryancontento.tincan.llm.ModelInfo
 import io.github.ryancontento.tincan.llm.Role
+import io.github.ryancontento.tincan.stop
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -82,12 +83,16 @@ class RewriteTranscriptTest {
         .also { it.mkdirs() }
     private val chat: ChatRepository = createChatRepository(dir.absolutePath)
     private val settings: SettingsRepository = createSettingsRepository(dir.absolutePath)
+    private val running = mutableListOf<ChatViewModel>()
 
     @BeforeTest
     fun installMainDispatcher() = Dispatchers.setMain(Dispatchers.Default)
 
     @AfterTest
     fun cleanUp() {
+        // Before resetMain, or their collectors reach for a dispatcher that is
+        // no longer there and fail whichever test is running by then.
+        running.forEach { it.stop() }
         Dispatchers.resetMain()
         chat.close()
         dir.deleteRecursively()
@@ -96,6 +101,7 @@ class RewriteTranscriptTest {
     private suspend fun viewModel(backend: RecordingBackend): ChatViewModel {
         settings.setSelectedModel("phi4")
         return ChatViewModel(settings, chat, backend, reconnectPollMillis = POLL_MILLIS)
+            .also { running += it }
     }
 
     private suspend fun ChatViewModel.await(predicate: (ChatUiState) -> Boolean): ChatUiState =
@@ -147,7 +153,10 @@ class RewriteTranscriptTest {
         withTimeout(TIMEOUT_MILLIS) {
             while (backend.requests.size < 2) delay(20)
         }
-        vm.await { !it.isGenerating }
+        // Not just !isGenerating: the reply is put back in a finally block that
+        // runs after generation has already reported itself finished, so the
+        // wait has to be for the restored row, not for the flag.
+        vm.await { !it.isGenerating && it.messages.size == 2 }
 
         val messages = chat.observeMessages(conversationId).first()
         assertEquals(2, messages.size, "the question and its original answer")
@@ -218,7 +227,9 @@ class RewriteTranscriptTest {
         vm.send("first question")
         val state = vm.await { it.messages.size == 2 && !it.isGenerating }
 
-        vm.setConversationSystemPrompt(state.activeConversationId!!, "Answer only in haiku.")
+        // Joined, not fired and forgotten: the prompt is written by a coroutine,
+        // and a send that overtakes it carries the old prompt.
+        vm.setConversationSystemPrompt(state.activeConversationId!!, "Answer only in haiku.").join()
         vm.send("second question")
         vm.await { it.messages.size == 4 && !it.isGenerating }
 
