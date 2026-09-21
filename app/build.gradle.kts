@@ -58,6 +58,18 @@ compose.desktop {
             description = "A chat client for local LLMs"
             vendor = "Ryan Contento"
 
+            // jpackage ships a jlink'd runtime holding only the modules it can
+            // see being used, and it cannot see reflection. Without these the
+            // installed app starts and then fails on sun/misc/Unsafe the moment
+            // it reads settings — DataStore stores them as protobuf, and
+            // protobuf reaches for Unsafe. `./gradlew run` never shows this,
+            // because it runs on the full JDK.
+            //
+            // The list comes from `./gradlew :app:suggestRuntimeModules`, which
+            // runs jdeps over the real classpath. Re-run it after adding a
+            // dependency.
+            modules("java.instrument", "java.management", "jdk.unsupported")
+
             windows {
                 iconFile.set(project.file("icons/tincan.ico"))
                 menuGroup = "TinCan"
