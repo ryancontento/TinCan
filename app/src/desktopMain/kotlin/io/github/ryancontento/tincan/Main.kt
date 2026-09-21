@@ -8,11 +8,14 @@ import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import io.github.ryancontento.tincan.data.SettingsRepository
+import io.github.ryancontento.tincan.data.appDataDir
 import io.github.ryancontento.tincan.di.appModule
 import io.github.ryancontento.tincan.di.platformModule
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.koin.core.context.startKoin
+import java.awt.GraphicsEnvironment
+import javax.swing.JOptionPane
 
 /**
  * The entire desktop entry point. Everything below App() is shared with v2's
@@ -26,10 +29,18 @@ fun main() {
         error.printStackTrace()
     }
 
+    // Before Koin, because the whole point is to claim the directory before Room
+    // and DataStore open files inside it.
+    val dataDirectory = appDataDir()
+    if (acquireSingleInstance(dataDirectory) is SingleInstance.AlreadyRunning) {
+        reportAlreadyRunning()
+        return
+    }
+
     // Started here, not in App(): window size must be read before any composition
     // exists, and a second graph would mean a second DataStore over one file.
     // v2 does the same in Application.onCreate.
-    val koin = startKoin { modules(appModule(), platformModule()) }.koin
+    val koin = startKoin { modules(appModule(dataDirectory), platformModule()) }.koin
     val settings: SettingsRepository = koin.get()
 
     val saved = runBlocking {
@@ -72,6 +83,24 @@ fun main() {
         ) {
             App()
         }
+    }
+}
+
+/**
+ * A launch that exits silently looks like a crash, and a copy started from a
+ * desktop icon or a Start menu entry has no console to read — so say it in a
+ * dialog when there is a screen to put one on, and on stderr either way.
+ */
+private fun reportAlreadyRunning() {
+    System.err.println("TinCan is already running.")
+    if (GraphicsEnvironment.isHeadless()) return
+    runCatching {
+        JOptionPane.showMessageDialog(
+            null,
+            "TinCan is already running.",
+            "TinCan",
+            JOptionPane.INFORMATION_MESSAGE,
+        )
     }
 }
 

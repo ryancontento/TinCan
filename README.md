@@ -55,6 +55,11 @@ changing underneath you.
 and nothing else. Linux packages come from the CI matrix in
 `.github/workflows/build.yml`.
 
+Pushing a tag of the form `vX.Y.Z` runs that matrix and attaches the MSI, DEB
+and RPM to a GitHub release. The tag has to match `packageVersion` in
+`app/build.gradle.kts` — CI checks, because jpackage stamps that number into
+the installer and would not otherwise notice the mismatch.
+
 ## Privacy
 
 Conversations never leave your machine except to reach the server you configure.
@@ -88,3 +93,7 @@ one message from keystroke to stored reply.
 Runs the full suite. The view-model tests use real dispatchers and real SQLite
 rather than a virtual clock: Room and DataStore do genuine file IO on
 dispatchers a test scheduler does not own, so advancing it proves nothing.
+
+## Licence
+
+MIT — see [LICENSE](LICENSE).

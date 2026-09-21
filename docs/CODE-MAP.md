@@ -190,6 +190,13 @@ Bindings are in [AppModule.kt](../app/src/commonMain/kotlin/io/github/ryanconten
 anything platform-specific goes through
 [PlatformModule.kt](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/di/PlatformModule.kt).
 
+Before any of that, the process claims the data directory with a lock file and
+exits if another copy already holds it
+([SingleInstance.kt](../app/src/desktopMain/kotlin/io/github/ryancontento/tincan/SingleInstance.kt)).
+Two copies over one directory is not cosmetic — Room locks the database file
+and DataStore refuses a second instance over the same file. A lock rather than
+a pid file, so a crashed copy leaves nothing behind to clean up.
+
 ## Where the tests are, and why they differ
 
 - **`commonTest`** — pure logic, no clock and no IO: key handling, markdown

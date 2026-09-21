@@ -7,6 +7,7 @@ name: Build
 on:
   push:
     branches: [ main ]
+    tags: [ 'v*' ]
   pull_request:
   workflow_dispatch:
 
@@ -31,6 +32,7 @@ jobs:
     name: Package (${{ matrix.os }})
     # Only builds installers on tags; the check job covers every push.
     if: startsWith(github.ref, 'refs/tags/v')
+    needs: check
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -47,9 +49,61 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
+
+      # packageVersion is what ends up inside the MSI and the .deb, and jpackage
+      # will happily stamp 1.0.0 on a tag called v1.2.0. Catch that here rather
+      # than after someone installs it.
+      - name: Tag matches packageVersion
+        shell: bash
+        run: |
+          tagged="${GITHUB_REF_NAME#v}"
+          declared=$(sed -n 's/.*packageVersion = "\([^"]*\)".*/\1/p' app/build.gradle.kts)
+          if [ "$tagged" != "$declared" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match packageVersion $declared in app/build.gradle.kts"
+            exit 1
+          fi
+          echo "Building $declared."
+
       - run: ./gradlew :app:packageDistributionForCurrentOS --stacktrace
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: app/build/compose/binaries/main/*/
           if-no-files-found: error
+
+  release:
+    name: Publish the release
+    # One job rather than a step inside the matrix: two runners racing to create
+    # the same release is a known way to end up with two of them.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write     # the default token is read-only; creating a release needs write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      # The upload above keeps the whole binaries folder, which includes the
+      # unpacked app-image. Only the installers belong on the release page.
+      - name: Collect the installers
+        run: |
+          mkdir -p release
+          find artifacts -type f \( -name '*.msi' -o -name '*.deb' -o -name '*.rpm' \) \
+            -exec cp {} release/ \;
+          ls -l release
+          if [ -z "$(ls -A release)" ]; then
+            echo "::error::No installers found in the packaging artifacts"
+            exit 1
+          fi
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          # Draft while the installers have never been produced by this pipeline
+          # before. Review the three files, then press Publish. Drop this line
+          # once a release has come out of here cleanly.
+          draft: true
