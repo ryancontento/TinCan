@@ -1,0 +1,14 @@
+version: 2
+updates:
+  # Also keeps the SHA-pinned actions current.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+
+  # Kotlin, KSP and Compose Multiplatform move together; expect to merge those by hand.
+  - package-ecosystem: gradle
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
