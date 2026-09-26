@@ -24,6 +24,7 @@ import kotlin.time.ExperimentalTime
 class ChatRepository internal constructor(
     private val dao: ChatDao,
     private val rewriteFile: suspend () -> Unit = {},
+    private val flushLog: suspend () -> Unit = {},
     private val closeDatabase: () -> Unit = {},
 ) : AutoCloseable {
 
@@ -74,7 +75,11 @@ class ChatRepository internal constructor(
         )
     }
 
-    suspend fun deleteConversation(id: Long) = dao.deleteConversation(id)
+    /** secure_delete zeroes the pages; the flush drops the log's older copies of them. */
+    suspend fun deleteConversation(id: Long) {
+        dao.deleteConversation(id)
+        flushLog()
+    }
 
     suspend fun conversation(id: Long): ConversationEntity? = dao.conversation(id)
 
@@ -242,6 +247,9 @@ fun createChatRepository(directory: String = appDataDir()): ChatRepository {
                 // Then flush and truncate the log, which still holds the old copies.
                 connection.execSQL("PRAGMA wal_checkpoint(TRUNCATE)")
             }
+        },
+        flushLog = {
+            database.useWriterConnection { it.execSQL("PRAGMA wal_checkpoint(TRUNCATE)") }
         },
         closeDatabase = { database.close() },
     )

@@ -30,7 +30,7 @@ fun LlmError.toNotice(hasPartialOutput: Boolean): Notice = Notice(
 )
 
 fun LlmError.describe(): String = when (this) {
-    LlmError.Unreachable -> "Nothing answered at that address. If it is the MacBook, it is probably asleep."
+    LlmError.Unreachable -> "Nothing answered at that address. The machine may be asleep, off, or off the network."
     LlmError.ConnectionRefused -> "That machine answered, but Ollama is not running on that port."
     is LlmError.ModelNotFound -> "That server does not have \"$model\" pulled."
     LlmError.StreamInterrupted -> "The connection dropped mid-reply. What arrived is kept below."

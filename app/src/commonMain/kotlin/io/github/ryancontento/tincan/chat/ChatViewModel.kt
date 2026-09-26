@@ -13,6 +13,7 @@ import io.github.ryancontento.tincan.data.db.MessageStatus
 import io.github.ryancontento.tincan.data.db.SearchHit
 import io.github.ryancontento.tincan.export.ExportDocument
 import io.github.ryancontento.tincan.export.ExportFormat
+import io.github.ryancontento.tincan.export.FileSaver
 import io.github.ryancontento.tincan.export.exportConversation
 import io.github.ryancontento.tincan.llm.ChatEvent
 import io.github.ryancontento.tincan.llm.ChatRequest
@@ -26,6 +27,7 @@ import io.github.ryancontento.tincan.llm.planContext
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -91,6 +93,7 @@ class ChatViewModel(
 
     private val activeId = MutableStateFlow<Long?>(null)
     private var generation: Job? = null
+    private var pendingCheck: Job? = null
     private var restoredInitialSelection = false
 
     private val connection = ConnectionMonitor(
@@ -115,6 +118,7 @@ class ChatViewModel(
     }
 
     private fun observeSettings() = viewModelScope.launch {
+        var initial = true
         settingsRepository.settings.collect { settings ->
             val urlChanged = settings.serverUrl != _state.value.settings.serverUrl
             _state.update { it.copy(settings = settings) }
@@ -122,7 +126,17 @@ class ChatViewModel(
                 connection.reset()
                 _state.update { it.copy(availableModels = emptyList()) }
             }
-            if (connection.state.value == ConnectionState.UNKNOWN) connection.check()
+            if (connection.state.value == ConnectionState.UNKNOWN) {
+                pendingCheck?.cancel()
+                // The field saves per keystroke; wait so half-typed hostnames are not probed.
+                pendingCheck = if (urlChanged && !initial) {
+                    viewModelScope.launch { delay(ADDRESS_SETTLE_MILLIS); connection.check() }
+                } else {
+                    connection.check()
+                    null
+                }
+            }
+            initial = false
         }
     }
 
@@ -379,10 +393,18 @@ class ChatViewModel(
         return exportConversation(conversation, chatRepository.messages(id), format)
     }
 
-    /** Null path means the save dialog was dismissed, which is not worth a notice. */
-    fun reportExported(path: String?) {
-        if (path == null) return
-        _state.update { it.copy(notice = Notice("Exported to $path", Notice.Severity.INFO)) }
+    /** A write failure (read-only folder, full disk) becomes a notice rather than a crash. */
+    fun export(format: ExportFormat, saver: FileSaver) = viewModelScope.launch {
+        val document = buildExport(format) ?: return@launch
+        val notice = try {
+            // Null path means the save dialog was dismissed, which is not worth a notice.
+            saver.save(document)?.let { Notice("Exported to $it", Notice.Severity.INFO) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Notice("Could not export: ${e.message ?: e::class.simpleName}", Notice.Severity.ERROR)
+        }
+        notice?.let { n -> _state.update { it.copy(notice = n) } }
     }
 
     fun stop() {
@@ -577,3 +599,5 @@ private class StreamSink(prefix: String) {
         fun now() = uptime.elapsedNow().inWholeMilliseconds
     }
 }
+
+private const val ADDRESS_SETTLE_MILLIS = 800L

@@ -34,7 +34,6 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -68,7 +67,6 @@ import io.github.ryancontento.tincan.ui.TinDivider
 import io.github.ryancontento.tincan.ui.TinField
 import io.github.ryancontento.tincan.ui.TinOutlinedButton
 import io.github.ryancontento.tincan.ui.TinToolbarButton
-import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 
@@ -91,7 +89,6 @@ fun ChatScreen(
     var settingsForConversation by remember { mutableStateOf<Long?>(null) }
 
     val fileSaver: FileSaver = koinInject()
-    val scope = rememberCoroutineScope()
 
     Surface(
         Modifier
@@ -158,13 +155,7 @@ fun ChatScreen(
                     onMenuOpenChange = { modelMenuOpen = it },
                     onOpenSettings = onOpenSettings,
                     onOpenConversation = { state.activeConversationId?.let { settingsForConversation = it } },
-                    onExport = { format ->
-                        scope.launch {
-                            viewModel.buildExport(format)?.let {
-                                viewModel.reportExported(fileSaver.save(it))
-                            }
-                        }
-                    },
+                    onExport = { format -> viewModel.export(format, fileSaver) },
                     hasConversation = state.activeConversationId != null,
                     onReload = viewModel::refreshModels,
                     connection = state.connection,

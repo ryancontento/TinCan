@@ -22,8 +22,10 @@ actual fun systemPrefersDark(): Boolean {
 
 /** 0 means "do not use the light theme for apps". The key is absent on older builds. */
 private fun windowsPrefersDark(): Boolean {
+    // Full path: a bare "reg" lets Windows pick up a reg.exe from the working directory first.
+    val systemRoot = System.getenv("SystemRoot") ?: "C:\\Windows"
     val output = readCommand(
-        "reg", "query",
+        "$systemRoot\\System32\\reg.exe", "query",
         "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
         "/v", "AppsUseLightTheme",
     ) ?: return true
@@ -50,11 +52,13 @@ private fun linuxPrefersDark(): Boolean {
 /** Null on anything that goes wrong: a missing tool must not stop the app starting. */
 private fun readCommand(vararg command: String): String? = runCatching {
     val process = ProcessBuilder(*command).redirectErrorStream(true).start()
-    val output = process.inputStream.bufferedReader().use { it.readText() }
+    // Wait before reading: readText blocks until exit, which would make the timeout dead code.
+    // The output is a line or two, well under the pipe buffer, so the child cannot stall on a full pipe.
     if (!process.waitFor(PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-        process.destroy()
+        process.destroyForcibly()
         return null
     }
+    val output = process.inputStream.bufferedReader().use { it.readText() }
     output.takeIf { process.exitValue() == 0 }
 }.getOrNull()
 

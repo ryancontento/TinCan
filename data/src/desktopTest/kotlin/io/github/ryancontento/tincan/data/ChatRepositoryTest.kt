@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -104,6 +105,20 @@ class ChatRepositoryTest {
             // Cascade, not an orphaned row — enforced by the foreign key.
             assertTrue(repo.observeMessages(id).first().isEmpty())
             assertTrue(repo.observeConversations().first().isEmpty())
+        }
+    }
+
+    @Test
+    fun a_deleted_conversation_leaves_no_text_in_the_database_files() = runTest {
+        withRepo { repo, dir ->
+            val id = repo.createConversation(TEST_SERVER, "phi4", null)
+            repo.appendUserMessage(id, "my-very-private-question", TEST_SERVER)
+            assertTrue(dir.databaseContains("my-very-private-question"))
+
+            repo.deleteConversation(id)
+
+            // Without secure_delete the row stays readable in free pages.
+            assertFalse(dir.databaseContains("my-very-private-question"))
         }
     }
 

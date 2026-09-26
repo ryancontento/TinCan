@@ -5,6 +5,9 @@ import io.github.ryancontento.tincan.data.SettingsRepository
 import io.github.ryancontento.tincan.data.createChatRepository
 import io.github.ryancontento.tincan.data.createSettingsRepository
 import io.github.ryancontento.tincan.data.db.MessageRole
+import io.github.ryancontento.tincan.export.ExportDocument
+import io.github.ryancontento.tincan.export.ExportFormat
+import io.github.ryancontento.tincan.export.FileSaver
 import io.github.ryancontento.tincan.llm.BackendHealth
 import io.github.ryancontento.tincan.llm.BackendId
 import io.github.ryancontento.tincan.llm.ChatEvent
@@ -288,10 +291,30 @@ class RewriteTranscriptTest {
         vm.send("why does bandwidth matter")
         vm.await { it.messages.size == 2 && !it.isGenerating }
 
-        val document = assertNotNull(vm.buildExport(io.github.ryancontento.tincan.export.ExportFormat.MARKDOWN))
+        val document = assertNotNull(vm.buildExport(ExportFormat.MARKDOWN))
         assertTrue(document.content.contains("why does bandwidth matter"))
         assertTrue(document.content.contains("reply 1"))
         assertTrue(document.fileName.endsWith(".md"))
+    }
+
+    @Test
+    fun an_export_that_cannot_be_written_reports_an_error_instead_of_crashing() = runBlocking {
+        val backend = RecordingBackend()
+        val vm = viewModel(backend)
+        vm.await { it.connection == ConnectionState.ONLINE }
+
+        vm.send("a question")
+        vm.await { it.messages.size == 2 && !it.isGenerating }
+
+        val failingSaver = object : FileSaver {
+            override suspend fun save(document: ExportDocument): String? =
+                throw java.io.IOException("Access is denied")
+        }
+        vm.export(ExportFormat.MARKDOWN, failingSaver).join()
+
+        val notice = assertNotNull(vm.state.value.notice)
+        assertEquals(Notice.Severity.ERROR, notice.severity)
+        assertTrue(notice.text.contains("Access is denied"))
     }
 
     private companion object {
