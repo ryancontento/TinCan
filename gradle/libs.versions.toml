@@ -24,7 +24,7 @@ datastore = "1.1.4"
 
 # NOTE: for multiplatform these come from org.jetbrains.androidx, NOT androidx.
 # Google's coordinates resolve and then fail to link on the desktop target.
-lifecycle = "2.8.4"
+lifecycle = "2.11.0"
 navigation = "2.8.0-alpha13"
 
 koin = "4.0.4"
