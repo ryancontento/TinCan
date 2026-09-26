@@ -83,7 +83,7 @@ class ModelsViewModel(
     }
 
     fun unload(id: String) = viewModelScope.launch {
-        backend().unloadModel(id).onFailure { e -> _state.update { it.copy(error = describe(e)) } }
+        backend().unloadModel(id).onFailure(::showError)
         refresh().join()
     }
 
@@ -94,7 +94,7 @@ class ModelsViewModel(
     fun confirmDelete() = viewModelScope.launch {
         val id = _state.value.confirmDelete ?: return@launch
         _state.update { it.copy(confirmDelete = null) }
-        backend().deleteModel(id).onFailure { e -> _state.update { it.copy(error = describe(e)) } }
+        backend().deleteModel(id).onFailure(::showError)
         refresh().join()
     }
 
@@ -106,16 +106,12 @@ class ModelsViewModel(
         pullJob = viewModelScope.launch {
             backend().pullModel(model).collect { event ->
                 when (event) {
-                    is PullEvent.Progress -> _state.update {
-                        it.copy(pull = it.pull?.copy(status = event.status, fraction = event.fraction))
-                    }
+                    is PullEvent.Progress -> updatePull { it.copy(status = event.status, fraction = event.fraction) }
                     PullEvent.Done -> {
-                        _state.update { it.copy(pull = it.pull?.copy(status = "Pulled", fraction = 1f, running = false)) }
+                        updatePull { it.copy(status = "Pulled", fraction = 1f, running = false) }
                         refresh()
                     }
-                    is PullEvent.Failed -> _state.update {
-                        it.copy(pull = it.pull?.copy(running = false, error = event.error.describe()))
-                    }
+                    is PullEvent.Failed -> updatePull { it.copy(running = false, error = event.error.describe()) }
                 }
             }
         }
@@ -125,12 +121,16 @@ class ModelsViewModel(
     fun cancelPull() {
         pullJob?.cancel()
         pullJob = null
-        _state.update { it.copy(pull = it.pull?.copy(running = false, error = "Cancelled. Pull again to resume.")) }
+        updatePull { it.copy(running = false, error = "Cancelled. Pull again to resume.") }
     }
 
     fun dismissPull() = _state.update { it.copy(pull = null) }
 
     fun dismissError() = _state.update { it.copy(error = null) }
+
+    private fun updatePull(change: (PullState) -> PullState) = _state.update { it.copy(pull = it.pull?.let(change)) }
+
+    private fun showError(e: Throwable) = _state.update { it.copy(error = describe(e)) }
 
     private fun describe(e: Throwable): String =
         ((e as? OllamaException)?.error ?: LlmError.Unknown(e)).describe()

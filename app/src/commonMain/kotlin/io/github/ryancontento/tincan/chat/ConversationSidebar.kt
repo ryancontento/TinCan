@@ -53,13 +53,7 @@ import io.github.ryancontento.tincan.ui.TinField
 import io.github.ryancontento.tincan.ui.TinSectionLabel
 import kotlinx.datetime.Clock
 
-/**
- * A desktop-shaped layout, not a phone screen stretched wide.
- *
- * In v2 this becomes a navigation drawer rather than a permanent rail; keeping
- * that decision to this one composable is what stops the choice leaking through
- * the rest of the chat UI.
- */
+/** A permanent rail on desktop; on Android it becomes a drawer, and that choice stays inside this composable. */
 @Composable
 fun ConversationSidebar(
     width: Dp,
@@ -121,9 +115,7 @@ fun ConversationSidebar(
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            // Searching replaces the list rather than filtering it: a hit is a
-            // message, and listing only the conversations holding one would
-            // hide which message actually matched.
+            // Replaces the list rather than filtering it: a hit is a message, not a conversation.
             if (search.active) {
                 SearchResults(search, enabled, onOpenHit)
             } else {
@@ -131,9 +123,7 @@ fun ConversationSidebar(
             }
         }
 
-        // The rail's edge and its drag handle. The rule stays a hairline but the
-        // target around it is several pixels wide, because a 1px grab target is
-        // not one a pointer can reliably hit.
+        // The drag handle: a hairline to look at, several pixels to grab.
         Box(
             Modifier
                 .width(HANDLE_WIDTH)
@@ -323,9 +313,7 @@ private fun ConversationRow(
             }
         }
 
-        // Deleting takes a conversation and everything in it, so it asks once
-        // rather than acting on a single stray click. The actions stay hidden
-        // until the row is pointed at, so the rail reads as a list of names.
+        // Actions show on hover so the rail reads as names; delete asks once, since it takes everything.
         when {
             confirming -> {
                 TinIconButton(

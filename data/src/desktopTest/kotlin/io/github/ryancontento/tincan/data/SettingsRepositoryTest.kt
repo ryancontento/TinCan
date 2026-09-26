@@ -9,12 +9,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/**
- * Lives in desktopTest rather than commonTest because it needs a real temp
- * directory. Each test gets its own: DataStore throws if two instances in one
- * process are pointed at the same file, which is exactly what sharing a
- * directory across tests would do.
- */
+/** One directory per test: DataStore throws if two instances in one process share a file. */
 private fun tempRepo(): Pair<SettingsRepository, File> {
     val dir = File(System.getProperty("java.io.tmpdir"), "tincan-test-${UUID.randomUUID()}")
     dir.mkdirs()
@@ -49,8 +44,7 @@ class SettingsRepositoryTest {
 
             val settings = repo.settings.first()
 
-            // The setter trims — a URL pasted with trailing whitespace would
-            // otherwise produce a confusing connection failure.
+            // Trimmed, or a pasted trailing space becomes a confusing connection failure.
             assertEquals("http://example-host.internal:11434", settings.serverUrl)
             assertEquals("phi4", settings.selectedModel)
             assertEquals(8192, settings.numCtx)

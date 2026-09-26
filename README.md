@@ -24,8 +24,8 @@ packaging, and the Android target.
 - Regenerate a reply, or edit a question and resend from that point
 - Per-conversation model, system prompt, temperature and context window, so
   changing the defaults does not rewrite threads already under way
-- Images for vision models — attach, or paste with `Ctrl+V` — and text or code
-  files dropped into a message as a code block
+- Images for vision models — attach, paste with `Ctrl+V`, or drag onto the
+  window — and text or code files dropped into a message as a code block
 - Saved servers, switched from the top bar: localhost one minute, the machine
   with the GPU the next
 - A model manager: see what is loaded and how much of it is on the GPU, unload,
@@ -84,7 +84,13 @@ information. Deleting a conversation overwrites its text in the database file
 rather than just marking it free.
 
 Links in a model's reply open only if they are `http` or `https`; anything
-else — local files, network shares, other apps' URL schemes — is ignored.
+else — local files, network shares, other apps' URL schemes — is ignored. Before
+a link opens, TinCan shows its real address with the host in bold, unless you
+have chosen to trust that site.
+
+Errors and warnings go to `tincan.log` in the data folder, replaced on each
+launch. It never contains message text; attach it to a bug report if the app
+misbehaves.
 
 ## Layout
 

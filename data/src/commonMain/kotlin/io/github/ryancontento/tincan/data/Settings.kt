@@ -5,11 +5,7 @@ import io.github.ryancontento.tincan.llm.GenerationOptions
 /** SYSTEM defers to the desktop's own setting, which each platform reports differently. */
 enum class ThemePreference { SYSTEM, LIGHT, DARK }
 
-/**
- * Stored by name, and an unknown one falls back. A value written by a newer
- * build must not stop an older one starting, which is what matching by ordinal
- * or by valueOf() would do.
- */
+/** Stored by name; an unknown one (say, from a newer build) falls back instead of failing startup like valueOf(). */
 internal fun themeFrom(name: String?): ThemePreference =
     ThemePreference.entries.firstOrNull { it.name == name } ?: ThemePreference.SYSTEM
 
@@ -30,9 +26,10 @@ data class WindowGeometry(
 
 /** One immutable value so the UI reads a single object, not a flow per setting. */
 data class TinCanSettings(
-    /** The server every request goes to. */
     val serverUrl: String = DEFAULT_SERVER_URL,
     val savedServers: List<SavedServer> = emptyList(),
+    /** Links to these open without asking first. */
+    val trustedLinkHosts: Set<String> = emptySet(),
     val selectedModel: String? = null,
     val systemPrompt: String = "",
     val temperature: Float? = null,
@@ -50,7 +47,6 @@ data class TinCanSettings(
     val sidebarWidth: Int = DEFAULT_SIDEBAR_WIDTH,
     val window: WindowGeometry = WindowGeometry(),
 ) {
-    /** The saved name for the current address, if it has one. */
     val activeServerName: String?
         get() = savedServers.firstOrNull { sameServer(it.url, serverUrl) }?.name
 

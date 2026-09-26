@@ -49,6 +49,8 @@ class SettingsViewModel(
     }
 
     fun removeServer(url: String) = viewModelScope.launch { repository.removeServer(url) }
+
+    fun untrustLinkHost(host: String) = viewModelScope.launch { repository.untrustLinkHost(host) }
     fun setSystemPrompt(value: String) = viewModelScope.launch { repository.setSystemPrompt(value) }
     fun setKeepAlive(value: String) = viewModelScope.launch { repository.setKeepAlive(value) }
     fun setTheme(value: ThemePreference) = viewModelScope.launch { repository.setTheme(value) }
@@ -57,22 +59,16 @@ class SettingsViewModel(
 
     /** Blank clears the override and lets the server pick. */
     fun setNumCtx(raw: String) = viewModelScope.launch {
-        repository.setNumCtx(raw.trim().takeIf { it.isNotEmpty() }?.toIntOrNull()?.takeIf { it > 0 })
+        repository.setNumCtx(raw.trim().toIntOrNull()?.takeIf { it > 0 })
     }
 
-    fun setTemperature(raw: String) = viewModelScope.launch {
-        repository.setTemperature(raw.trim().takeIf { it.isNotEmpty() }?.toFloatOrNull())
-    }
+    fun setTemperature(raw: String) = viewModelScope.launch { repository.setTemperature(raw.trim().toFloatOrNull()) }
 
     fun setLoadingThreshold(raw: String) = viewModelScope.launch {
         raw.trim().toLongOrNull()?.let { repository.setModelLoadingThreshold(it) }
     }
 
-    /**
-     * Explicit connection check. Uses probe() rather than listModels() because
-     * the question here is "is anything alive at this address", which should
-     * stay cheap and short-timeout.
-     */
+    /** probe(), not listModels(): "is anything alive at this address" should stay cheap and short-timeout. */
     fun testConnection() {
         viewModelScope.launch {
             _state.update { it.copy(probe = ProbeState.Checking) }

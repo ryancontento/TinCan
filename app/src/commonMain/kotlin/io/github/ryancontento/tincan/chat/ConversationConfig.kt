@@ -4,11 +4,7 @@ import io.github.ryancontento.tincan.data.TinCanSettings
 import io.github.ryancontento.tincan.data.db.ConversationEntity
 import io.github.ryancontento.tincan.llm.GenerationOptions
 
-/**
- * A conversation snapshots the prompt it was created with, so editing the
- * default cannot rewrite threads already under way. Empty means deliberately
- * no prompt; null is a legacy row, written before the snapshot existed.
- */
+/** A conversation keeps the prompt it was created with. Empty means no prompt; null is a row from before the snapshot. */
 fun resolveSystemPrompt(conversationPrompt: String?, globalPrompt: String): String? =
     (conversationPrompt ?: globalPrompt).takeIf { it.isNotBlank() }
 

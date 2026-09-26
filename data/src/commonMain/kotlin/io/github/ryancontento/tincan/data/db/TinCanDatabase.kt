@@ -26,23 +26,17 @@ abstract class TinCanDatabase : RoomDatabase() {
     abstract fun chatDao(): ChatDao
 }
 
-/**
- * Room generates the actual for this. The suppression is required, not a
- * workaround — the compiler cannot see the generated implementation at the
- * point it checks for a matching actual declaration.
- */
+/** Room generates the actual; the suppression is required because the compiler cannot see it. */
 @Suppress("NO_ACTUAL_FOR_EXPECT", "KotlinNoActualForExpect")
 expect object TinCanDatabaseConstructor : RoomDatabaseConstructor<TinCanDatabase> {
     override fun initialize(): TinCanDatabase
 }
 
-/** Supplies the platform's builder; the shared configuration is applied below. */
 internal expect fun databaseBuilder(directory: String): RoomDatabase.Builder<TinCanDatabase>
 
 internal fun createDatabase(directory: String = appDataDir()): TinCanDatabase =
     databaseBuilder(directory)
-        // The bundled driver ships its own SQLite rather than relying on one
-        // being present, which is what makes Room work off Android at all.
+        // Ships its own SQLite, which is what lets Room run off Android.
         .setDriver(SecureDeleteDriver(BundledSQLiteDriver()))
         .setQueryCoroutineContext(Dispatchers.IO)
         .build()

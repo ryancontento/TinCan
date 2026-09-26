@@ -7,10 +7,7 @@ import java.awt.FileDialog
 import java.awt.Frame
 import java.io.File
 
-/**
- * AWT's native save dialog rather than Swing's JFileChooser: it is the one the
- * platform actually uses, so it looks right on Windows and on Linux desktops.
- */
+/** AWT's native dialog, not Swing's JFileChooser, so it looks right on each platform. */
 class DesktopFileSaver : FileSaver {
 
     override suspend fun save(document: ExportDocument): String? {

@@ -49,11 +49,7 @@ data class ChatRequest(
 
 data class GenerationOptions(
     val temperature: Float? = null,
-    /**
-     * Ollama silently truncates history at num_ctx and tells you nothing about
-     * it. Setting this explicitly is the only way to know what the server is
-     * actually doing with a long conversation.
-     */
+    /** Ollama silently truncates history at num_ctx; setting it is the only way to know the real window. */
     val numCtx: Int? = null,
     /** How long the server keeps the model resident after this request. */
     val keepAlive: String? = null,
@@ -71,8 +67,7 @@ data class GenerationStats(
     val tokensPerSecond: Float?
         get() {
             val tokens = completionTokens ?: return null
-            val nanos = evalDurationNanos ?: return null
-            if (nanos <= 0L) return null
+            val nanos = evalDurationNanos?.takeIf { it > 0L } ?: return null
             return tokens * 1_000_000_000f / nanos
         }
 }

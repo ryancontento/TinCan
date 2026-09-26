@@ -13,12 +13,8 @@ class AppearanceSettingsTest {
             settings.setTheme(ThemePreference.LIGHT)
             settings.setSidebarWidth(312)
 
-            // Closing and reopening over the same folder is what a relaunch is.
-            // DataStore refuses two instances on one file, so the close is the
-            // part that makes this a real round trip rather than a cache read.
-            //
-            // Repeated, because releasing the file is asynchronous and a single
-            // pass hides the race: one platform wins it and another does not.
+            // Close-and-reopen is a relaunch. Repeated because the file is released asynchronously:
+            // a single pass passed on Windows but hid a race that failed on Linux CI.
             settings.close()
             repeat(REOPEN_ATTEMPTS) {
                 val reopened = createSettingsRepository(dir.absolutePath)
@@ -50,10 +46,7 @@ class AppearanceSettingsTest {
         }
     }
 
-    /**
-     * A value written by a newer build must not stop an older one starting,
-     * which is the failure mode of mapping an enum by ordinal or by valueOf().
-     */
+    /** A value written by a newer build must not stop an older one starting. */
     @Test
     fun an_unrecognised_theme_name_falls_back_instead_of_throwing() {
         assertEquals(ThemePreference.SYSTEM, themeFrom("SOLARIZED"))

@@ -12,7 +12,7 @@ interface ChatDao {
     @Query("SELECT * FROM conversations ORDER BY pinned DESC, updatedAt DESC")
     fun observeConversations(): Flow<List<ConversationEntity>>
 
-    /** Not activity, so updatedAt is left alone and the conversation keeps its place in time. */
+    /** Leaves updatedAt alone: pinning is not activity, so the conversation keeps its place. */
     @Query("UPDATE conversations SET pinned = :pinned WHERE id = :id")
     suspend fun setPinned(id: Long, pinned: Boolean)
 
@@ -58,12 +58,7 @@ interface ChatDao {
     @Insert
     suspend fun insertMessage(message: MessageEntity): Long
 
-    /**
-     * Used on the streaming path, which is why it is a targeted UPDATE rather
-     * than @Update on the whole row: the in-flight reply is written repeatedly
-     * as it grows, and rewriting every column each time would be wasteful and
-     * would clobber fields set elsewhere.
-     */
+    /** Targeted, not @Update: streaming writes it repeatedly and must not clobber other columns. */
     @Query("UPDATE messages SET content = :content, thinking = :thinking WHERE id = :id")
     suspend fun updateMessageBody(id: Long, content: String, thinking: String?)
 
@@ -92,7 +87,6 @@ interface ChatDao {
     @Query("UPDATE messages SET status = :status WHERE id = :id")
     suspend fun setMessageStatus(id: Long, status: MessageStatus)
 
-    /** The oldest message still waiting to be delivered, if any. */
     @Query(
         """
         SELECT * FROM messages
@@ -103,25 +97,18 @@ interface ChatDao {
     )
     suspend fun oldestPendingMessage(conversationId: Long): MessageEntity?
 
-    /** Conversations holding undelivered messages, for retry once the server returns. */
+    /** For retrying once the server is back. */
     @Query("SELECT DISTINCT conversationId FROM messages WHERE status = 'PENDING'")
     fun observeConversationsWithPendingMessages(): Flow<List<Long>>
 
     @Query("DELETE FROM messages WHERE id = :id")
     suspend fun deleteMessage(id: Long)
 
-    /**
-     * Drops a message and everything after it. Ids autoincrement, so within one
-     * conversation they run in the same order the transcript is read in.
-     */
+    /** Ids autoincrement, so within a conversation they follow transcript order. */
     @Query("DELETE FROM messages WHERE conversationId = :conversationId AND id >= :fromMessageId")
     suspend fun deleteMessagesFrom(conversationId: Long, fromMessageId: Long)
 
-    /**
-     * LIKE rather than an FTS table: at one person's history it is instant, and
-     * it costs no schema version, no migration and no shadow table to keep in
-     * sync. Revisit if a transcript ever gets big enough to notice.
-     */
+    /** LIKE, not FTS: instant at one person's scale and needs no schema change. Revisit if it gets slow. */
     @Query(
         """
         SELECT m.id AS messageId, m.conversationId AS conversationId, c.title AS conversationTitle,
@@ -135,16 +122,10 @@ interface ChatDao {
     )
     suspend fun searchMessages(term: String, limit: Int): List<SearchHit>
 
-    /**
-     * Anything left mid-flight when the process died is not coming back, so it
-     * is demoted to INCOMPLETE at startup. Without this, a crash during
-     * generation would leave a row claiming to be STREAMING forever and the UI
-     * would show a reply that never finishes.
-     */
     @Query("UPDATE messages SET status = 'INCOMPLETE' WHERE status = 'STREAMING'")
     suspend fun demoteOrphanedStreamingMessages()
 
-    /** Distinct backend values across both tables, for the address sweep at startup. */
+    /** For the startup address sweep. */
     @Query(
         """
         SELECT DISTINCT backendId FROM conversations

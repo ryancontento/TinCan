@@ -10,15 +10,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 
 /**
- * Lives in desktopTest because it needs the real java.net exception types —
- * which is exactly the point. The mapping itself is in commonMain and matches
- * on class name rather than importing these, so that it stays Android-safe;
- * this test is what proves the names it matches are the right ones.
- *
- * The messages below are the real ones each platform produces, not invented.
- * The Windows DNS wording is why this test exists: "No such host is known"
- * matched none of the message patterns originally written for it, so a bad
- * MagicDNS name surfaced to the user as "Unexpected failure".
+ * desktopTest proves the class names matched in commonMain are the real java.net ones. Messages are real
+ * per-platform output; Windows' "No such host is known" once matched nothing and showed "Unexpected failure".
  */
 class ErrorMappingTest {
 
@@ -35,8 +28,7 @@ class ErrorMappingTest {
 
     @Test
     fun refused_connection_is_distinct_from_an_absent_host() {
-        // Different diagnosis, different fix: one means start Ollama, the other
-        // means wake the machine. Collapsing them would send the user the wrong way.
+        // Different fixes: start Ollama versus wake the machine.
         assertEquals(
             LlmError.ConnectionRefused,
             ConnectException("Connection refused: connect").toLlmError(),

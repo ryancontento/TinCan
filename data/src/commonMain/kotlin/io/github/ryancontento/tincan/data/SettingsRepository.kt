@@ -1,6 +1,7 @@
 package io.github.ryancontento.tincan.data
 
 import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -9,6 +10,7 @@ import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -37,24 +39,18 @@ private object Keys {
     val sendKey = stringPreferencesKey("send_key")
     val closeToTray = booleanPreferencesKey("close_to_tray")
     val savedServers = stringPreferencesKey("saved_servers")
+    val trustedLinkHosts = stringSetPreferencesKey("trusted_link_hosts")
 }
 
-/** Absent keys fall back to defaults rather than being written eagerly, so
- * changing a default later still reaches existing installs. */
+/** Absent keys read as defaults and are never written eagerly, so a changed default reaches existing installs. */
 class SettingsRepository internal constructor(
     private val store: DataStore<Preferences>,
     private val storeScope: CoroutineScope? = null,
 ) {
 
     /**
-     * Releases the file so another instance may open it, and waits for the
-     * release to land. Tests need it to simulate a relaunch; the app holds one
-     * repository for its whole life.
-     *
-     * Suspending rather than AutoCloseable, and joining rather than just
-     * cancelling, because DataStore only drops the file from its registry of
-     * open stores as the scope finishes completing. A reopen that does not wait
-     * races that cleanup — Windows won the race and Linux CI lost it.
+     * Joined, not just cancelled: DataStore frees the file only as its scope completes, and a reopen
+     * that doesn't wait races that (Windows won, Linux CI lost). Only tests close; the app never does.
      */
     suspend fun close() {
         storeScope?.coroutineContext?.job?.cancelAndJoin()
@@ -64,6 +60,7 @@ class SettingsRepository internal constructor(
         TinCanSettings(
             serverUrl = prefs[Keys.serverUrl] ?: TinCanSettings.DEFAULT_SERVER_URL,
             savedServers = decodeServers(prefs[Keys.savedServers]),
+            trustedLinkHosts = prefs[Keys.trustedLinkHosts].orEmpty(),
             selectedModel = prefs[Keys.selectedModel],
             systemPrompt = prefs[Keys.systemPrompt].orEmpty(),
             temperature = prefs[Keys.temperature],
@@ -90,23 +87,25 @@ class SettingsRepository internal constructor(
         prefs[Keys.savedServers] = encodeServers(decodeServers(prefs[Keys.savedServers]).withServer(name, url))
     }
 
+    suspend fun trustLinkHost(host: String) = edit { prefs ->
+        prefs[Keys.trustedLinkHosts] = prefs[Keys.trustedLinkHosts].orEmpty() + host.lowercase()
+    }
+
+    suspend fun untrustLinkHost(host: String) = edit { prefs ->
+        prefs[Keys.trustedLinkHosts] = prefs[Keys.trustedLinkHosts].orEmpty() - host.lowercase()
+    }
+
     suspend fun removeServer(url: String) = edit { prefs ->
         prefs[Keys.savedServers] = encodeServers(decodeServers(prefs[Keys.savedServers]).withoutServer(url))
     }
 
-    suspend fun setSelectedModel(value: String?) = edit { prefs ->
-        if (value == null) prefs.remove(Keys.selectedModel) else prefs[Keys.selectedModel] = value
-    }
+    suspend fun setSelectedModel(value: String?) = edit { it.setOrRemove(Keys.selectedModel, value) }
 
     suspend fun setSystemPrompt(value: String) = edit { it[Keys.systemPrompt] = value }
 
-    suspend fun setTemperature(value: Float?) = edit { prefs ->
-        if (value == null) prefs.remove(Keys.temperature) else prefs[Keys.temperature] = value
-    }
+    suspend fun setTemperature(value: Float?) = edit { it.setOrRemove(Keys.temperature, value) }
 
-    suspend fun setNumCtx(value: Int?) = edit { prefs ->
-        if (value == null) prefs.remove(Keys.numCtx) else prefs[Keys.numCtx] = value
-    }
+    suspend fun setNumCtx(value: Int?) = edit { it.setOrRemove(Keys.numCtx, value) }
 
     suspend fun setKeepAlive(value: String) = edit { it[Keys.keepAlive] = value.trim() }
 
@@ -139,10 +138,7 @@ class SettingsRepository internal constructor(
         }
     }
 
-    /**
-     * The identifier stored on rows for [url]. Deliberately not part of
-     * [settings]: the salt is not a preference and must never reach the UI.
-     */
+    /** Not part of [settings]: the salt is not a preference and must never reach the UI. */
     suspend fun serverKeyFor(url: String): ServerKey = ServerKey.derive(url, salt())
 
     /** Read-or-create inside one edit, so concurrent callers agree on the value. */
@@ -155,8 +151,13 @@ class SettingsRepository internal constructor(
         return salt
     }
 
-    private suspend fun edit(block: (androidx.datastore.preferences.core.MutablePreferences) -> Unit) {
+    private suspend fun edit(block: (MutablePreferences) -> Unit) {
         store.edit(block)
+    }
+
+    /** Null removes the key, so the default applies again instead of a stored null. */
+    private fun <T> MutablePreferences.setOrRemove(key: Preferences.Key<T>, value: T?) {
+        if (value == null) remove(key) else set(key, value)
     }
 
     companion object {
@@ -165,21 +166,9 @@ class SettingsRepository internal constructor(
     }
 }
 
-/**
- * Builds a repository backed by a file in [directory].
- *
- * The DataStore itself is deliberately NOT part of this module's public API:
- * exposing it would put androidx.datastore on the classpath of every consumer,
- * the same way returning an HttpClient would have leaked Ktor out of
- * :llm-ollama. Callers get a repository and no knowledge of how it persists.
- *
- * The directory is a parameter so tests can point at a temp folder instead of
- * the user's real settings.
- */
+/** DataStore stays out of the public API so consumers never get androidx.datastore on their classpath. */
 fun createSettingsRepository(directory: String = appDataDir()): SettingsRepository {
-    // An owned scope rather than the default one: DataStore keeps the file
-    // locked until its scope is cancelled, so without this nothing can ever
-    // hand the file back.
+    // Owned scope: DataStore holds the file until its scope is cancelled, so close() needs one it can cancel.
     val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     return SettingsRepository(
         store = PreferenceDataStoreFactory.createWithPath(

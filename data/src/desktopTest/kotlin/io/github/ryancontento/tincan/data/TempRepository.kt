@@ -4,13 +4,7 @@ import io.github.ryancontento.tincan.data.db.DATABASE_FILE_NAME
 import java.io.File
 import java.util.UUID
 
-/**
- * Runs [block] against a repository on a throwaway database, handing over its
- * directory so a test can inspect the files themselves.
- *
- * One directory per call: Room holds a file lock, so a shared path deadlocks
- * rather than failing cleanly.
- */
+/** One directory per call: Room holds a file lock, so a shared path deadlocks rather than failing. */
 inline fun withRepo(block: (ChatRepository, File) -> Unit) {
     val dir = File(System.getProperty("java.io.tmpdir"), "tincan-test-${UUID.randomUUID()}")
     dir.mkdirs()

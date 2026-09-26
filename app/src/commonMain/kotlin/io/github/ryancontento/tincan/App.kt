@@ -4,7 +4,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -14,8 +18,11 @@ import io.github.ryancontento.tincan.data.SettingsRepository
 import io.github.ryancontento.tincan.data.TinCanSettings
 import io.github.ryancontento.tincan.models.ModelsScreen
 import io.github.ryancontento.tincan.settings.SettingsScreen
+import io.github.ryancontento.tincan.ui.GuardedUriHandler
+import io.github.ryancontento.tincan.ui.LinkConfirmDialog
 import io.github.ryancontento.tincan.ui.TinCanTheme
-import io.github.ryancontento.tincan.ui.WebOnlyUriHandler
+import io.github.ryancontento.tincan.ui.linkHost
+import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import org.koin.compose.koinInject
 
@@ -28,27 +35,21 @@ object SettingsRoute
 @Serializable
 object ModelsRoute
 
-/**
- * The whole app above the platform line. v2's MainActivity calls exactly this,
- * which is the point of keeping the window and the Activity down to an entry
- * point that does nothing but host it.
- *
- * Koin is expected to have been started already, by main() on desktop and by
- * the Application class on Android. It is not started here because settings
- * must be readable before a window exists, and a second graph would mean a
- * second DataStore over the same file — which DataStore rejects.
- */
+/** The shared UI root. Koin must already be running: settings are read before a window exists. */
 @Composable
 fun App() {
-    // The theme is read here rather than through a view model: it wraps the
-    // navigation host, so it has to resolve before any screen composes.
     val settingsRepository: SettingsRepository = koinInject()
     val settings by settingsRepository.settings.collectAsState(initial = TinCanSettings())
+    val scope = rememberCoroutineScope()
 
-    val uriHandler = LocalUriHandler.current
-    val webOnly = remember(uriHandler) { WebOnlyUriHandler(uriHandler) }
+    var pendingLink by remember { mutableStateOf<String?>(null) }
+    val trustedHosts by rememberUpdatedState(settings.trustedLinkHosts)
+    val platformLinks = LocalUriHandler.current
+    val links = remember(platformLinks) {
+        GuardedUriHandler(platformLinks, trustedHosts = { trustedHosts }, confirm = { pendingLink = it })
+    }
 
-    CompositionLocalProvider(LocalUriHandler provides webOnly) {
+    CompositionLocalProvider(LocalUriHandler provides links) {
         TinCanTheme(settings.theme) {
             val navController = rememberNavController()
             NavHost(navController = navController, startDestination = ChatRoute) {
@@ -58,15 +59,21 @@ fun App() {
                         onOpenModels = { navController.navigate(ModelsRoute) },
                     )
                 }
-                composable<ModelsRoute> {
-                    ModelsScreen(onBack = { navController.popBackStack() })
-                }
-                composable<SettingsRoute> {
-                    // popBackStack rather than navigate() so returning to chat does
-                    // not stack a second copy of it on the back stack — which is
-                    // what makes Android's back button behave in v2.
-                    SettingsScreen(onBack = { navController.popBackStack() })
-                }
+                // popBackStack, not navigate: a second Chat on the stack breaks Android's back button.
+                composable<ModelsRoute> { ModelsScreen(onBack = { navController.popBackStack() }) }
+                composable<SettingsRoute> { SettingsScreen(onBack = { navController.popBackStack() }) }
+            }
+
+            pendingLink?.let { url ->
+                LinkConfirmDialog(
+                    url = url,
+                    onOpen = { alwaysTrust ->
+                        pendingLink = null
+                        if (alwaysTrust) linkHost(url)?.let { scope.launch { settingsRepository.trustLinkHost(it) } }
+                        links.open(url)
+                    },
+                    onDismiss = { pendingLink = null },
+                )
             }
         }
     }

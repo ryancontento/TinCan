@@ -4,12 +4,9 @@ package io.github.ryancontento.tincan.chat
 data class MarkdownSplit(val settled: String, val pending: String)
 
 /**
- * Finds the last point where the markdown is provably complete.
- *
- * Parsing the whole reply per chunk is what makes streaming chat UIs stutter,
- * so the settled prefix is parsed once per paragraph and the tail is drawn as
- * plain text. Fence state is tracked because a blank line inside an open ```
- * block is not a boundary — splitting there renders code as prose.
+ * Splits at the last point the markdown is provably complete, so only settled paragraphs are parsed:
+ * reparsing the whole reply per chunk is what makes streaming stutter. A blank line inside an open
+ * fence is not a boundary, or code would render as prose.
  */
 fun splitStreamingMarkdown(text: String): MarkdownSplit {
     if (text.isEmpty()) return MarkdownSplit("", "")

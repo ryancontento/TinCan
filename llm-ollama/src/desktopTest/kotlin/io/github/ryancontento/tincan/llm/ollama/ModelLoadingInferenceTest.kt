@@ -18,19 +18,8 @@ import kotlin.test.Test
 import kotlin.test.assertTrue
 
 /**
- * These tests use a REAL clock, which is why they live in desktopTest rather
- * than alongside the parsing tests in commonTest.
- *
- * The obvious approach — runTest's virtual clock — does not work here and
- * produced a test that failed roughly half the time, in both directions. The
- * reason is that Ktor's client pipeline runs the response body on its own
- * dispatcher, so the mock's writer coroutine and the backend's
- * time-to-first-token watcher are not ordered by the same scheduler. Virtual
- * time cannot sequence two clocks it does not both control.
- *
- * So: real delays, with margins wide enough (6x or better) that ordinary
- * scheduling jitter cannot reorder them. The whole class costs under two
- * seconds, which is a fair price for a test that does not lie.
+ * Real clock, hence desktopTest: Ktor runs the body on its own dispatcher, so runTest's virtual time
+ * cannot order the mock writer against the first-token watcher (it flaked ~50%). Margins are 6x or more.
  */
 class ModelLoadingInferenceTest {
 
@@ -68,8 +57,7 @@ class ModelLoadingInferenceTest {
             events.any { it is ChatEvent.ModelLoading },
             "expected ModelLoading, got ${events.map { it::class.simpleName }}",
         )
-        // It must arrive before any output, or the UI would announce loading
-        // after the reply had already started.
+        // Otherwise the UI would announce loading after the reply had started.
         val loadingAt = events.indexOfFirst { it is ChatEvent.ModelLoading }
         val firstTokenAt = events.indexOfFirst { it is ChatEvent.Token }
         assertTrue(loadingAt < firstTokenAt, "ModelLoading must precede the first token")
@@ -89,8 +77,7 @@ class ModelLoadingInferenceTest {
 
     @Test
     fun does_not_report_model_loading_when_the_server_returns_an_error() = runBlocking {
-        // Deterministic without any margin at all: the watcher is only started
-        // after a successful response, so an error never starts the clock.
+        // Guards a past bug; deterministic because the watcher only starts after a successful response.
         val engine = MockEngine {
             respond(
                 content = "upstream exploded",

@@ -4,10 +4,7 @@ import io.github.ryancontento.tincan.llm.BackendId
 import io.github.ryancontento.tincan.llm.LlmBackend
 import io.github.ryancontento.tincan.llm.LlmBackendProvider
 
-/**
- * Backends share one HTTP client. The URL is a mutable setting so a backend
- * cannot be a singleton, but a client per send would leak connection pools.
- */
+/** Backends share one HTTP client: the URL is a setting so backends can't be singletons, but a client each leaks pools. */
 class OllamaBackendFactory(
     connectTimeoutMillis: Long = 4_000,
     socketTimeoutMillis: Long = 120_000,
@@ -29,7 +26,5 @@ class OllamaBackendFactory(
         modelLoadingThresholdMillis = modelLoadingThresholdMillis,
     )
 
-    override fun close() {
-        client.close()
-    }
+    override fun close() = client.close()
 }

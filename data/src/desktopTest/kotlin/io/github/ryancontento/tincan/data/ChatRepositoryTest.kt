@@ -82,8 +82,7 @@ class ChatRepositoryTest {
             val msg = repo.beginAssistantMessage(id, "phi4", TEST_SERVER)
             repo.updateStreamingBody(msg, "half a rep", null)
 
-            // Simulates the process dying mid-generation: the row is left
-            // STREAMING and nothing will ever finish it.
+            // As if the process died mid-generation, leaving the row STREAMING.
             repo.recoverInterruptedMessages()
 
             val stored = repo.observeMessages(id).first().single()

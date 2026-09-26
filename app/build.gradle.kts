@@ -42,6 +42,8 @@ kotlin {
             // is exactly why jpackage cannot cross-compile. See the CI matrix.
             implementation(compose.desktop.currentOs)
             implementation(libs.kotlinx.coroutines.swing)
+            // Gives Ktor's SLF4J somewhere to write, which startErrorLog sends to the log file.
+            runtimeOnly(libs.slf4j.simple)
         }
         val desktopTest by getting
         desktopTest.dependencies {

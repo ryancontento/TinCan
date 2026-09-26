@@ -12,22 +12,14 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.http.HttpHeaders
 import io.ktor.utils.io.ByteReadChannel
-import io.ktor.utils.io.writeStringUtf8
-import io.ktor.utils.io.writer
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.toList
-import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
-/**
- * Fixtures below are real output captured from Ollama 0.34.1 with
- * `curl http://localhost:11434/api/chat`, not hand-written. Hand-written
- * fixtures test your idea of the protocol rather than the protocol.
- */
+/** Captured from Ollama 0.34.1 via curl: hand-written fixtures test your idea of the protocol, not the protocol. */
 internal const val COMPLETE_STREAM = """{"model":"llama3.2:1b","created_at":"2026-09-17T15:42:59.5670387Z","message":{"role":"assistant","content":"Hello"},"done":false}
 {"model":"llama3.2:1b","created_at":"2026-09-17T15:42:59.7001801Z","message":{"role":"assistant","content":"."},"done":false}
 {"model":"llama3.2:1b","created_at":"2026-09-17T15:42:59.7420965Z","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","total_duration":30258609300,"load_duration":19906358300,"prompt_eval_count":29,"prompt_eval_cached_count":0,"prompt_eval_duration":10175903000,"eval_count":3,"eval_duration":173639000}
@@ -90,9 +82,7 @@ class RemoteOllamaBackendTest {
         val events = backendReturning(COMPLETE_STREAM).chat(request()).toList()
         val stats = assertIs<ChatEvent.Completed>(events.last()).stats
 
-        // 3 tokens in 173_639_000ns is ~17.3 tok/s. Crucially this must exclude
-        // the 19.9s of load time, or a cold start would report ~0.1 tok/s and
-        // look like the model is broken.
+        // 3 tokens in 173_639_000ns; including the 19.9s load would report ~0.1 tok/s on a cold start.
         val rate = stats.tokensPerSecond!!
         assertTrue(rate > 15f && rate < 20f, "expected ~17 tok/s, got $rate")
     }

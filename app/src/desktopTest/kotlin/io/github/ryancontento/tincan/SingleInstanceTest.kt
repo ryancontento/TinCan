@@ -3,14 +3,11 @@ package io.github.ryancontento.tincan
 import java.io.File
 import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
-/**
- * A second lock attempt from this same process raises a different exception
- * than a second one from another process, and the guard is only useful if both
- * produce the same answer — which is what these tests pin down.
- */
+/** A same-process retry fails differently from another process's; both must read as AlreadyRunning. */
 class SingleInstanceTest {
 
     @Test
@@ -54,6 +51,29 @@ class SingleInstanceTest {
 
         assertIs<SingleInstance.Acquired>(held).release()
         assertTrue(missing.isDirectory)
+    }
+
+    /** The bug: main() discarded the claim, so the lock went with the first garbage collection. */
+    @Test
+    fun a_claimed_directory_stays_locked_to_other_processes_after_garbage_collection() {
+        val directory = tempDirectory()
+        acquireAndDrop { claimDataDirectory(directory) }
+
+        collectGarbage()
+
+        assertEquals("AlreadyRunning", probeFromAnotherProcess(directory))
+    }
+
+    /** Not inline, so no local in the test method keeps the result reachable, just as main() did not. */
+    private fun acquireAndDrop(acquire: () -> SingleInstance) {
+        check(acquire() is SingleInstance.Acquired)
+    }
+
+    private fun collectGarbage() {
+        repeat(5) {
+            System.gc()
+            Thread.sleep(200)
+        }
     }
 
     private fun tempDirectory(): String =

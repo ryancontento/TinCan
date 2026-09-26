@@ -8,10 +8,7 @@ import kotlinx.datetime.toLocalDateTime
 
 data class ConversationGroup(val label: String, val conversations: List<ConversationEntity>)
 
-/**
- * Pinned first, then by how long ago the conversation was last active, in calendar days
- * where the user is: 11pm yesterday is "Yesterday" even if it was an hour ago.
- */
+/** Pinned first, then by calendar day where the user is: 11pm yesterday is "Yesterday" even an hour later. */
 fun groupConversations(
     conversations: List<ConversationEntity>,
     nowMillis: Long,

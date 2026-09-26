@@ -42,13 +42,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/**
- * The app's controls, sized for a mouse.
- *
- * Material's own components are built around a 40dp minimum touch target and a
- * pill radius. Rather than fight those defaults at every call site, the whole
- * app goes through these.
- */
+/** Mouse-sized controls: Material's assume a 40dp touch target and pill corners, so the app goes through these. */
 object Metrics {
     val control: Dp = 26.dp
     val field: Dp = 28.dp
@@ -199,10 +193,7 @@ fun TinOutlinedButton(
     }
 }
 
-/**
- * A toolbar action. Neutral until hovered — a row of accent-coloured words
- * reads as a row of links, and none of them is the primary action.
- */
+/** Neutral until hovered: a row of accent-coloured words reads as a row of links. */
 @Composable
 fun TinToolbarButton(
     onClick: () -> Unit,
@@ -275,7 +266,6 @@ fun TinIconButton(
     }
 }
 
-/** The small uppercase rule that separates one group of settings from the next. */
 @Composable
 fun TinSectionLabel(text: String, modifier: Modifier = Modifier) {
     Text(
@@ -303,12 +293,7 @@ fun TinFormRow(
     }
 }
 
-/**
- * A row of mutually exclusive choices sharing one border.
- *
- * Three radio buttons would take three times the height and read as three
- * separate decisions; this reads as one setting with one answer.
- */
+/** One border, one answer: radio buttons would take triple the height and read as separate decisions. */
 @Composable
 fun <T> TinSegmented(
     options: List<T>,
@@ -347,7 +332,7 @@ fun <T> TinSegmented(
     }
 }
 
-/** A 1px rule. Structure comes from these rather than from shadows. */
+/** Structure comes from rules like this, not from shadows. */
 @Composable
 fun TinDivider(modifier: Modifier = Modifier) {
     Box(
@@ -357,4 +342,3 @@ fun TinDivider(modifier: Modifier = Modifier) {
             .background(MaterialTheme.colorScheme.outlineVariant),
     )
 }
-

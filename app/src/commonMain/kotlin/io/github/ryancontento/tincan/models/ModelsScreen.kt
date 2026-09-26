@@ -48,31 +48,10 @@ fun ModelsScreen(
     viewModel: ModelsViewModel = koinViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
-    val colors = MaterialTheme.colorScheme
 
-    Surface(Modifier.fillMaxSize(), color = colors.background) {
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize()) {
-            Row(
-                Modifier.fillMaxWidth().height(40.dp).padding(horizontal = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                TinIconButton(onClick = onBack, icon = TinIcon.CHEVRON_LEFT, description = "Back to chat")
-                Text("Models", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    "on ${state.serverName ?: state.serverUrl}",
-                    style = MaterialTheme.typography.labelMedium.merge(MonoStyle),
-                    color = colors.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-                TinToolbarButton(
-                    onClick = { viewModel.refresh() },
-                    label = if (state.refreshing) "Refreshing…" else "Refresh",
-                    enabled = !state.refreshing,
-                )
-            }
+            Header(state, onBack = onBack, onRefresh = { viewModel.refresh() })
             TinDivider()
 
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
@@ -80,17 +59,7 @@ fun ModelsScreen(
                     Modifier.widthIn(max = 720.dp).padding(horizontal = 20.dp, vertical = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(18.dp),
                 ) {
-                    state.error?.let { error ->
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                error,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = colors.error,
-                                modifier = Modifier.weight(1f),
-                            )
-                            TinToolbarButton(onClick = viewModel::dismissError, label = "Dismiss")
-                        }
-                    }
+                    state.error?.let { ErrorLine(it, onDismiss = viewModel::dismissError) }
 
                     PullSection(
                         pull = state.pull,
@@ -101,8 +70,7 @@ fun ModelsScreen(
 
                     TinDivider()
 
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        TinSectionLabel("In memory")
+                    ModelList("In memory") {
                         if (state.loaded.isEmpty()) {
                             Hint("Nothing loaded. A model loads when it is first asked something.")
                         }
@@ -111,8 +79,7 @@ fun ModelsScreen(
 
                     TinDivider()
 
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        TinSectionLabel("Installed")
+                    ModelList("Installed") {
                         if (state.installed.isEmpty() && !state.refreshing) Hint("No models on this server yet.")
                         state.installed.forEach { model ->
                             InstalledRow(
@@ -129,21 +96,72 @@ fun ModelsScreen(
     }
 
     state.confirmDelete?.let { id ->
-        AlertDialog(
-            onDismissRequest = viewModel::cancelDelete,
-            shape = MaterialTheme.shapes.large,
-            containerColor = colors.surface,
-            title = { Text("Delete $id?", style = MaterialTheme.typography.titleMedium) },
-            text = {
-                Text(
-                    "This removes it from the server. Getting it back means pulling it again.",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            },
-            confirmButton = { TinButton(onClick = { viewModel.confirmDelete() }, label = "Delete") },
-            dismissButton = { TinToolbarButton(onClick = viewModel::cancelDelete, label = "Cancel") },
+        ConfirmDeleteDialog(id, onConfirm = { viewModel.confirmDelete() }, onCancel = viewModel::cancelDelete)
+    }
+}
+
+@Composable
+private fun Header(state: ModelsUiState, onBack: () -> Unit, onRefresh: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().height(40.dp).padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        TinIconButton(onClick = onBack, icon = TinIcon.CHEVRON_LEFT, description = "Back to chat")
+        Text("Models", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "on ${state.serverName ?: state.serverUrl}",
+            style = MaterialTheme.typography.labelMedium.merge(MonoStyle),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        TinToolbarButton(
+            onClick = onRefresh,
+            label = if (state.refreshing) "Refreshing…" else "Refresh",
+            enabled = !state.refreshing,
         )
     }
+}
+
+@Composable
+private fun ErrorLine(error: String, onDismiss: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            error,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+            modifier = Modifier.weight(1f),
+        )
+        TinToolbarButton(onClick = onDismiss, label = "Dismiss")
+    }
+}
+
+@Composable
+private fun ModelList(title: String, content: @Composable () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        TinSectionLabel(title)
+        content()
+    }
+}
+
+@Composable
+private fun ConfirmDeleteDialog(id: String, onConfirm: () -> Unit, onCancel: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onCancel,
+        shape = MaterialTheme.shapes.large,
+        containerColor = MaterialTheme.colorScheme.surface,
+        title = { Text("Delete $id?", style = MaterialTheme.typography.titleMedium) },
+        text = {
+            Text(
+                "This removes it from the server. Getting it back means pulling it again.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        },
+        confirmButton = { TinButton(onClick = onConfirm, label = "Delete") },
+        dismissButton = { TinToolbarButton(onClick = onCancel, label = "Cancel") },
+    )
 }
 
 @Composable
@@ -154,7 +172,6 @@ private fun PullSection(
     onDismiss: () -> Unit,
 ) {
     var name by remember { mutableStateOf("") }
-    val colors = MaterialTheme.colorScheme
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         TinSectionLabel("Pull a model")
@@ -174,29 +191,33 @@ private fun PullSection(
         }
         Hint("Names come from ollama.com/library. Add a tag such as :8b to pick a size.")
 
-        pull?.let {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(it.model, style = MaterialTheme.typography.bodyMedium.merge(MonoStyle))
-                it.fraction?.let { fraction ->
-                    LinearProgressIndicator(
-                        progress = { fraction },
-                        modifier = Modifier.width(160.dp).height(4.dp),
-                        color = colors.primary,
-                        trackColor = colors.surfaceVariant,
-                        gapSize = 0.dp,
-                        drawStopIndicator = {},
-                    )
-                    Text("${(fraction * 100).toInt()}%", style = MaterialTheme.typography.labelMedium)
-                }
-                Text(
-                    it.error ?: it.status,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = if (it.error != null) colors.error else colors.onSurfaceVariant,
-                    modifier = Modifier.weight(1f),
-                )
-                if (!it.running) TinToolbarButton(onClick = onDismiss, label = "Dismiss")
-            }
+        pull?.let { PullProgress(it, onDismiss) }
+    }
+}
+
+@Composable
+private fun PullProgress(pull: PullState, onDismiss: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(pull.model, style = MaterialTheme.typography.bodyMedium.merge(MonoStyle))
+        pull.fraction?.let { fraction ->
+            LinearProgressIndicator(
+                progress = { fraction },
+                modifier = Modifier.width(160.dp).height(4.dp),
+                color = colors.primary,
+                trackColor = colors.surfaceVariant,
+                gapSize = 0.dp,
+                drawStopIndicator = {},
+            )
+            Text("${(fraction * 100).toInt()}%", style = MaterialTheme.typography.labelMedium)
         }
+        Text(
+            pull.error ?: pull.status,
+            style = MaterialTheme.typography.labelMedium,
+            color = if (pull.error != null) colors.error else colors.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        if (!pull.running) TinToolbarButton(onClick = onDismiss, label = "Dismiss")
     }
 }
 

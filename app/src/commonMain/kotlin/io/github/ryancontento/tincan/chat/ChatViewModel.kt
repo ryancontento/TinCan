@@ -7,13 +7,9 @@ import io.github.ryancontento.tincan.attach.PickedFile
 import io.github.ryancontento.tincan.attach.classify
 import io.github.ryancontento.tincan.data.ChatRepository
 import io.github.ryancontento.tincan.data.ImageAttachment
-import io.github.ryancontento.tincan.data.db.AttachmentEntity
-import io.github.ryancontento.tincan.data.ServerKey
 import io.github.ryancontento.tincan.data.SettingsRepository
 import io.github.ryancontento.tincan.data.TinCanSettings
-import io.github.ryancontento.tincan.data.db.ConversationEntity
 import io.github.ryancontento.tincan.data.db.MessageEntity
-import io.github.ryancontento.tincan.data.db.MessageRole
 import io.github.ryancontento.tincan.data.db.MessageStatus
 import io.github.ryancontento.tincan.data.db.SearchHit
 import io.github.ryancontento.tincan.export.ExportDocument
@@ -26,7 +22,6 @@ import io.github.ryancontento.tincan.llm.ContextPlan
 import io.github.ryancontento.tincan.llm.GenerationStats
 import io.github.ryancontento.tincan.llm.LlmBackendProvider
 import io.github.ryancontento.tincan.llm.LlmError
-import io.github.ryancontento.tincan.llm.ModelInfo
 import io.github.ryancontento.tincan.llm.ollama.OllamaException
 import io.github.ryancontento.tincan.llm.planContext
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -43,58 +38,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.cancellation.CancellationException
-import kotlin.time.TimeSource
-
-data class ChatUiState(
-    val conversations: List<ConversationEntity> = emptyList(),
-    val activeConversationId: Long? = null,
-    val messages: List<MessageEntity> = emptyList(),
-    /** In-flight reply, overlaid on its own row so appends recompose one bubble. */
-    val streamingMessageId: Long? = null,
-    val streamingText: String = "",
-    val streamingThinking: String = "",
-    val isGenerating: Boolean = false,
-    val availableModels: List<ModelInfo> = emptyList(),
-    val settings: TinCanSettings = TinCanSettings(),
-    val notice: Notice? = null,
-    val connection: ConnectionState = ConnectionState.UNKNOWN,
-    /** Messages composed while unreachable, awaiting delivery. */
-    val queuedCount: Int = 0,
-    val context: ContextPlan? = null,
-    val search: SearchState = SearchState(),
-    /** Set once when a search hit is opened, cleared as soon as it is scrolled to. */
-    val scrollToMessageId: Long? = null,
-    /** Images waiting in the composer for the next send. */
-    val draftImages: List<DraftImage> = emptyList(),
-    /** Images already sent in the active conversation, by message. */
-    val attachments: Map<Long, List<AttachmentEntity>> = emptyMap(),
-) {
-    /** False only when the server says so; older servers report no capabilities, so it is unknown. */
-    val activeModelSeesImages: Boolean
-        get() = availableModels.firstOrNull { it.id == activeModel }
-            ?.let { it.capabilities.isEmpty() || it.supportsImages } ?: true
-
-    val canContinue: Boolean
-        get() = !isGenerating && messages.lastOrNull()
-            ?.let { it.role == MessageRole.ASSISTANT && it.status == MessageStatus.INCOMPLETE } == true
-
-    val activeConversation: ConversationEntity?
-        get() = conversations.firstOrNull { it.id == activeConversationId }
-
-    /** What the next send will actually use, which is not always the global choice. */
-    val activeModel: String?
-        get() = resolveModel(activeConversation?.defaultModelId, settings.selectedModel)
-
-    /** Regenerating replaces the last reply, so there has to be one and nothing in flight. */
-    val canRegenerate: Boolean
-        get() = !isGenerating && messages.lastOrNull()?.role == MessageRole.ASSISTANT
-}
-
-class DraftImage(val name: String, val image: ImageAttachment)
-
-data class SearchState(val term: String = "", val hits: List<SearchHit> = emptyList()) {
-    val active: Boolean get() = term.isNotBlank()
-}
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChatViewModel(
@@ -107,6 +50,7 @@ class ChatViewModel(
     private val _state = MutableStateFlow(ChatUiState())
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
 
+    /** The real selection. State gets a copy published with its messages, so header and transcript never disagree. */
     private val activeId = MutableStateFlow<Long?>(null)
     private var generation: Job? = null
     private var pendingCheck: Job? = null
@@ -121,18 +65,17 @@ class ChatViewModel(
 
     init {
         viewModelScope.launch {
-            // Rows still STREAMING belong to a dead process; demote before the UI sees them.
             chatRepository.recoverInterruptedMessages()
             chatRepository.redactStoredServerAddresses(settingsRepository::serverKeyFor)
         }
-
         observeSettings()
         observeConversations()
-        observeActiveMessages()
-        observeAttachments()
+        observeActiveConversation()
         observeQueue()
         observeConnection()
     }
+
+    // region Observing
 
     private fun observeSettings() = viewModelScope.launch {
         var initial = true
@@ -145,7 +88,7 @@ class ChatViewModel(
             }
             if (connection.state.value == ConnectionState.UNKNOWN) {
                 pendingCheck?.cancel()
-                // The field saves per keystroke; wait so half-typed hostnames are not probed.
+                // The address field saves per keystroke; waiting keeps half-typed hostnames from being probed.
                 pendingCheck = if (urlChanged && !initial) {
                     viewModelScope.launch { delay(ADDRESS_SETTLE_MILLIS); connection.check() }
                 } else {
@@ -160,9 +103,7 @@ class ChatViewModel(
     private fun observeConversations() = viewModelScope.launch {
         chatRepository.observeConversations().collect { conversations ->
             _state.update { it.copy(conversations = conversations) }
-            // Resume where the app left off, but only once. Every later emission
-            // also arrives with no selection right after New conversation, and
-            // restoring then would silently drag the user back to the old thread.
+            // Once only: later emissions after New conversation would drag the user back.
             if (!restoredInitialSelection) {
                 restoredInitialSelection = true
                 conversations.firstOrNull()?.let { select(it.id) }
@@ -170,26 +111,18 @@ class ChatViewModel(
         }
     }
 
-    /**
-     * [activeId] is the authoritative selection; the copy in the state is for
-     * display. They are published together so the screen can never show one
-     * conversation's header above another's transcript.
-     */
-    private fun observeActiveMessages() = viewModelScope.launch {
-        activeId
-            .flatMapLatest { id ->
-                if (id == null) flowOf(null to emptyList()) else chatRepository.observeMessages(id).map { id to it }
-            }
-            .collect { (id, messages) ->
-                _state.update { it.copy(activeConversationId = id, messages = messages) }
-            }
-    }
-
-    /** Separate from messages: the attachments table stays quiet while a reply streams. */
-    private fun observeAttachments() = viewModelScope.launch {
-        activeId
-            .flatMapLatest { id -> if (id == null) flowOf(emptyList()) else chatRepository.observeAttachments(id) }
-            .collect { rows -> _state.update { it.copy(attachments = rows.groupBy { row -> row.messageId }) } }
+    private fun observeActiveConversation() {
+        viewModelScope.launch {
+            activeId
+                .flatMapLatest { id -> if (id == null) flowOf(null to emptyList()) else chatRepository.observeMessages(id).map { id to it } }
+                .collect { (id, messages) -> _state.update { it.copy(activeConversationId = id, messages = messages) } }
+        }
+        // A separate query, so a streaming reply's frequent writes never re-read the image blobs.
+        viewModelScope.launch {
+            activeId
+                .flatMapLatest { id -> if (id == null) flowOf(emptyList()) else chatRepository.observeAttachments(id) }
+                .collect { rows -> _state.update { it.copy(attachments = rows.groupBy { row -> row.messageId }) } }
+        }
     }
 
     private fun observeQueue() = viewModelScope.launch {
@@ -204,8 +137,7 @@ class ChatViewModel(
                 state.copy(
                     connection = status,
                     notice = when {
-                        status == ConnectionState.OFFLINE ->
-                            connection.error.value?.toNotice(hasPartialOutput = false) ?: state.notice
+                        status == ConnectionState.OFFLINE -> connection.error.value?.toNotice(hasPartialOutput = false) ?: state.notice
                         // A stale error must not outlive the condition behind it.
                         status == ConnectionState.ONLINE && state.notice?.severity == Notice.Severity.ERROR -> null
                         else -> state.notice
@@ -219,23 +151,28 @@ class ChatViewModel(
         }
     }
 
+    // endregion
+
+    // region Navigation and selection
+
     fun checkConnection() = connection.check()
 
-    /** The first showing is covered by the connection coming online; this catches returns. */
+    /** Catches a return from the Models screen; the first showing is covered by the connection coming online. */
     fun onShown() {
         if (connection.state.value == ConnectionState.ONLINE) refreshModels()
     }
 
+    /** Refused mid-reply, which would orphan the stream. */
     fun select(conversationId: Long) {
-        if (_state.value.isGenerating) return   // switching mid-stream would orphan the reply
+        if (_state.value.isGenerating) return
         activeId.value = conversationId
-        _state.update { it.copy(notice = null) }
+        notify(null)
     }
 
     fun newConversation() {
         if (_state.value.isGenerating) return
         activeId.value = null
-        _state.update { it.copy(notice = null) }
+        notify(null)
     }
 
     fun deleteConversation(id: Long) = viewModelScope.launch {
@@ -243,7 +180,6 @@ class ChatViewModel(
         if (activeId.value == id) activeId.value = null
     }
 
-    /** Not mid-reply: the stream would keep writing into a thread now pointed elsewhere. */
     fun selectServer(url: String) {
         if (_state.value.isGenerating) return
         viewModelScope.launch { settingsRepository.setServerUrl(url) }
@@ -258,204 +194,15 @@ class ChatViewModel(
         val settings = _state.value.settings
         backends.create(settings.serverUrl).listModels()
             .onSuccess { models ->
-                _state.update {
-                    it.copy(
-                        availableModels = models,
-                        notice = if (models.isEmpty()) {
-                            Notice("Connected, but that server has no models pulled.", Notice.Severity.INFO)
-                        } else {
-                            it.notice
-                        },
-                    )
-                }
-                val current = settings.selectedModel
-                if (models.isNotEmpty() && (current == null || models.none { m -> m.id == current })) {
+                if (models.isEmpty()) notify(Notice("Connected, but that server has no models pulled.", Notice.Severity.INFO))
+                _state.update { it.copy(availableModels = models) }
+                if (models.isNotEmpty() && models.none { it.id == settings.selectedModel }) {
                     settingsRepository.setSelectedModel(models.first().id)
                 }
             }
             .onFailure { error -> (error as? OllamaException)?.error?.let(connection::reportUnreachable) }
     }
 
-    /** False when nothing was sent, so the composer keeps what the user typed. */
-    fun send(text: String): Boolean {
-        val body = text.trim()
-        val state = _state.value
-        val settings = state.settings
-        val model = state.activeModel ?: return false
-        val images = state.draftImages.map { it.image }
-        if ((body.isEmpty() && images.isEmpty()) || state.isGenerating) return false
-        if (images.isNotEmpty() && !state.activeModelSeesImages) {
-            _state.update {
-                it.copy(notice = Notice("$model can't read images. Pick a vision model, or remove the image.", Notice.Severity.ERROR))
-            }
-            return false
-        }
-        _state.update { it.copy(draftImages = emptyList()) }
-
-        viewModelScope.launch {
-            val serverKey = settingsRepository.serverKeyFor(settings.serverUrl)
-            val conversationId = ensureConversation(model, settings, serverKey)
-            val userMessageId = chatRepository.appendUserMessage(conversationId, body, serverKey, images)
-            chatRepository.titleFromFirstMessageIfUnset(conversationId, body.ifEmpty { "Image" })
-
-            if (connection.isOffline) {
-                // Already known down, so skip the timeout. It sends itself on reconnect.
-                chatRepository.markPending(userMessageId)
-                _state.update {
-                    it.copy(notice = Notice("Saved. It will send when the server is back.", Notice.Severity.INFO))
-                }
-                return@launch
-            }
-            generation = launch { generate(conversationId, model, settings, userMessageId) }
-        }
-        return true
-    }
-
-    /**
-     * Images join the draft; text files come back as blocks for the composer to insert,
-     * so the user sees exactly what will be sent. Anything else is explained, not dropped silently.
-     */
-    fun attach(files: List<PickedFile>): List<String> {
-        val results = files.map(::classify)
-        val images = results.filterIsInstance<Attachment.Image>().map { DraftImage(it.name, it.image) }
-        val rejected = results.filterIsInstance<Attachment.Rejected>().map { it.reason }
-        _state.update {
-            it.copy(
-                draftImages = it.draftImages + images,
-                notice = if (rejected.isEmpty()) it.notice else Notice("Not attached: ${rejected.joinToString("; ")}.", Notice.Severity.INFO),
-            )
-        }
-        return results.filterIsInstance<Attachment.Text>().map { it.block }
-    }
-
-    fun removeDraftImage(index: Int) = _state.update {
-        it.copy(draftImages = it.draftImages.filterIndexed { i, _ -> i != index })
-    }
-
-    /** Sends the queued message in the active conversation, if there is one. */
-    fun deliverQueued() {
-        val settings = _state.value.settings
-        val model = _state.value.activeModel ?: return
-        val conversationId = activeId.value ?: return
-        if (_state.value.isGenerating) return
-
-        viewModelScope.launch {
-            val pending = chatRepository.oldestPendingMessage(conversationId) ?: return@launch
-            generation = launch { generate(conversationId, model, settings, pending.id) }
-        }
-    }
-
-    /**
-     * Resumes a truncated reply. Ollama continues an assistant turn when it is
-     * last in the history, so output appends to the same row.
-     */
-    fun continueReply() {
-        val settings = _state.value.settings
-        val model = _state.value.activeModel ?: return
-        val conversationId = activeId.value ?: return
-        if (_state.value.isGenerating) return
-
-        viewModelScope.launch {
-            val partial = chatRepository.resumableReply(conversationId) ?: return@launch
-            chatRepository.resumeAssistantMessage(partial.id)
-            generation = launch {
-                generate(conversationId, model, settings, null, partial.id, partial.content)
-            }
-        }
-    }
-
-    /**
-     * Throws the last reply away and asks again. Deleting it first is what makes
-     * this a retry rather than a continuation — the model must not be shown the
-     * answer it is being asked to replace.
-     */
-    fun regenerateLastReply() {
-        val settings = _state.value.settings
-        val model = _state.value.activeModel ?: return
-        val conversationId = activeId.value ?: return
-        if (_state.value.isGenerating) return
-
-        viewModelScope.launch {
-            val previous = chatRepository.lastAssistantMessage(conversationId) ?: return@launch
-            chatRepository.discardMessage(previous.id)
-            generation = launch {
-                try {
-                    generate(conversationId, model, settings, userMessageId = null)
-                } finally {
-                    // Deleting first is what stops the model seeing the answer it
-                    // is replacing, but it also puts that answer at risk for the
-                    // length of the call. If nothing came back, put it back.
-                    // NonCancellable because Stop cancels this scope too.
-                    withContext(NonCancellable) {
-                        if (chatRepository.lastAssistantMessage(conversationId) == null) {
-                            chatRepository.restoreMessage(previous)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /**
-     * Replaces a question and everything that followed it. The turns after the
-     * edit answered a question that no longer exists, so they go too.
-     */
-    fun editAndResend(messageId: Long, text: String) {
-        val body = text.trim()
-        val settings = _state.value.settings
-        val model = _state.value.activeModel ?: return
-        val conversationId = activeId.value ?: return
-        // Editing the words keeps the images; the rewrite deletes the row they hang off.
-        val images = _state.value.attachments[messageId].orEmpty().map { ImageAttachment(it.mimeType, it.bytes) }
-        if ((body.isEmpty() && images.isEmpty()) || _state.value.isGenerating) return
-
-        viewModelScope.launch {
-            val serverKey = settingsRepository.serverKeyFor(settings.serverUrl)
-            chatRepository.truncateFrom(conversationId, messageId)
-            val userMessageId = chatRepository.appendUserMessage(conversationId, body, serverKey, images)
-
-            if (connection.isOffline) {
-                chatRepository.markPending(userMessageId)
-                _state.update {
-                    it.copy(notice = Notice("Saved. It will send when the server is back.", Notice.Severity.INFO))
-                }
-                return@launch
-            }
-            generation = launch { generate(conversationId, model, settings, userMessageId) }
-        }
-    }
-
-    fun renameConversation(id: Long, title: String) = viewModelScope.launch {
-        chatRepository.renameConversation(id, title)
-    }
-
-    /** Null hands the conversation back to the global default. */
-    fun setConversationSystemPrompt(id: Long, prompt: String?) = viewModelScope.launch {
-        chatRepository.setSystemPrompt(id, prompt)
-    }
-
-    /** Blank or invalid text hands that setting back to the global value. */
-    fun setConversationOptions(id: Long, temperature: String, numCtx: String) = viewModelScope.launch {
-        chatRepository.setGenerationOptions(id, parseTemperature(temperature), parseNumCtx(numCtx))
-    }
-
-    fun setPinned(id: Long, pinned: Boolean) = viewModelScope.launch {
-        chatRepository.setPinned(id, pinned)
-    }
-
-    fun search(term: String) = viewModelScope.launch {
-        _state.update { it.copy(search = it.search.copy(term = term)) }
-        val hits = chatRepository.search(term)
-        // Discard a result that arrived after the user kept typing.
-        if (_state.value.search.term == term) {
-            _state.update { it.copy(search = it.search.copy(hits = hits)) }
-        }
-    }
-
-    /** Written when the drag ends, not per pixel: dragging fires continuously. */
-    fun setSidebarWidth(dp: Int) = viewModelScope.launch { settingsRepository.setSidebarWidth(dp) }
-
-    /** Opens the conversation a hit belongs to and asks the transcript to scroll to it. */
     fun openSearchHit(hit: SearchHit) {
         if (_state.value.isGenerating) return
         select(hit.conversationId)
@@ -464,25 +211,117 @@ class ChatViewModel(
 
     fun scrolledToTarget() = _state.update { it.copy(scrollToMessageId = null) }
 
-    /** Builds the file; writing it is the platform layer's job. */
-    suspend fun buildExport(format: ExportFormat): ExportDocument? {
-        val id = activeId.value ?: return null
-        val conversation = chatRepository.conversation(id) ?: return null
-        return exportConversation(conversation, chatRepository.messages(id), format, chatRepository.attachments(id))
+    fun search(term: String) = viewModelScope.launch {
+        _state.update { it.copy(search = it.search.copy(term = term)) }
+        val hits = chatRepository.search(term)
+        // Drop a result that arrived after the user kept typing.
+        if (_state.value.search.term == term) _state.update { it.copy(search = it.search.copy(hits = hits)) }
     }
 
-    /** A write failure (read-only folder, full disk) becomes a notice rather than a crash. */
-    fun export(format: ExportFormat, saver: FileSaver) = viewModelScope.launch {
-        val document = buildExport(format) ?: return@launch
-        val notice = try {
-            // Null path means the save dialog was dismissed, which is not worth a notice.
-            saver.save(document)?.let { Notice("Exported to $it", Notice.Severity.INFO) }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Notice("Could not export: ${e.message ?: e::class.simpleName}", Notice.Severity.ERROR)
+    // endregion
+
+    // region Composing
+
+    /** False when nothing was sent, so the composer keeps what the user typed. */
+    fun send(text: String): Boolean {
+        val body = text.trim()
+        val state = _state.value
+        val model = state.activeModel ?: return false
+        val images = state.draftImages.map { it.image }
+        if ((body.isEmpty() && images.isEmpty()) || state.isGenerating) return false
+        if (images.isNotEmpty() && !state.activeModelSeesImages) {
+            notify(Notice("$model can't read images. Pick a vision model, or remove the image.", Notice.Severity.ERROR))
+            return false
         }
-        notice?.let { n -> _state.update { it.copy(notice = n) } }
+        _state.update { it.copy(draftImages = emptyList()) }
+
+        viewModelScope.launch {
+            val settings = state.settings
+            val serverKey = settingsRepository.serverKeyFor(settings.serverUrl)
+            val conversationId = activeId.value ?: chatRepository.createConversation(
+                serverKey = serverKey,
+                defaultModelId = model,
+                // A copy, so changing the default later cannot rewrite this conversation.
+                systemPrompt = settings.systemPrompt,
+            ).also { activeId.value = it }
+            val questionId = chatRepository.appendUserMessage(conversationId, body, serverKey, images)
+            chatRepository.titleFromFirstMessageIfUnset(conversationId, body.ifEmpty { "Image" })
+            sendOrQueue(Turn(conversationId, model, settings), questionId)
+        }
+        return true
+    }
+
+    /** Images join the draft; text files come back as blocks for the composer; the rest is explained. */
+    fun attach(files: List<PickedFile>): List<String> {
+        val results = files.map(::classify)
+        val rejected = results.filterIsInstance<Attachment.Rejected>().map { it.reason }
+        _state.update { state ->
+            state.copy(draftImages = state.draftImages + results.filterIsInstance<Attachment.Image>().map { DraftImage(it.name, it.image) })
+        }
+        if (rejected.isNotEmpty()) notify(Notice("Not attached: ${rejected.joinToString("; ")}.", Notice.Severity.INFO))
+        return results.filterIsInstance<Attachment.Text>().map { it.block }
+    }
+
+    fun removeDraftImage(index: Int) = _state.update {
+        it.copy(draftImages = it.draftImages.filterIndexed { i, _ -> i != index })
+    }
+
+    /** Replaces a question and every turn after it, since they answered something no longer asked. */
+    fun editAndResend(messageId: Long, text: String) {
+        val turn = nextTurn() ?: return
+        val body = text.trim()
+        // The images hang off the row the rewrite deletes, so they are carried across.
+        val images = _state.value.attachments[messageId].orEmpty().map { ImageAttachment(it.mimeType, it.bytes) }
+        if (body.isEmpty() && images.isEmpty()) return
+
+        viewModelScope.launch {
+            chatRepository.truncateFrom(turn.conversationId, messageId)
+            val serverKey = settingsRepository.serverKeyFor(turn.settings.serverUrl)
+            sendOrQueue(turn, chatRepository.appendUserMessage(turn.conversationId, body, serverKey, images))
+        }
+    }
+
+    // endregion
+
+    // region Replies
+
+    fun deliverQueued() {
+        val turn = nextTurn() ?: return
+        viewModelScope.launch {
+            val pending = chatRepository.oldestPendingMessage(turn.conversationId) ?: return@launch
+            startGeneration(turn, pending.id)
+        }
+    }
+
+    /** Ollama continues an assistant turn that is last in the history, so output appends to the same row. */
+    fun continueReply() {
+        val turn = nextTurn() ?: return
+        viewModelScope.launch {
+            val partial = chatRepository.resumableReply(turn.conversationId) ?: return@launch
+            chatRepository.resumeAssistantMessage(partial.id)
+            startGeneration(turn, questionId = null, resume = partial)
+        }
+    }
+
+    /**
+     * Deletes the last reply first, so the model is not shown the answer it is replacing, and
+     * puts it back if nothing new arrives.
+     */
+    fun regenerateLastReply() {
+        val turn = nextTurn() ?: return
+        viewModelScope.launch {
+            val previous = chatRepository.lastAssistantMessage(turn.conversationId) ?: return@launch
+            chatRepository.discardMessage(previous.id)
+            generation = viewModelScope.launch {
+                try {
+                    generate(turn, questionId = null)
+                } finally {
+                    withContext(NonCancellable) {
+                        if (chatRepository.lastAssistantMessage(turn.conversationId) == null) chatRepository.restoreMessage(previous)
+                    }
+                }
+            }
+        }
     }
 
     fun stop() {
@@ -490,137 +329,163 @@ class ChatViewModel(
         generation = null
     }
 
-    fun dismissNotice() = _state.update { it.copy(notice = null) }
+    // endregion
 
-    private suspend fun ensureConversation(
-        model: String,
-        settings: TinCanSettings,
-        serverKey: ServerKey,
-    ): Long =
-        activeId.value ?: chatRepository.createConversation(
-            serverKey = serverKey,
-            defaultModelId = model,
-            // Snapshotted, not referenced: changing the default later must not
-            // rewrite how this conversation behaves.
-            systemPrompt = settings.systemPrompt,
-        ).also { activeId.value = it }
+    // region Conversation settings
 
-    private suspend fun generate(
-        conversationId: Long,
-        model: String,
-        settings: TinCanSettings,
-        userMessageId: Long?,
-        resumeMessageId: Long? = null,
-        resumePrefix: String = "",
-    ) {
-        // Read from the row, not from settings: the conversation owns its prompt and overrides.
+    fun renameConversation(id: Long, title: String) = viewModelScope.launch { chatRepository.renameConversation(id, title) }
+
+    /** Null hands the conversation back to the global default. */
+    fun setConversationSystemPrompt(id: Long, prompt: String?) = viewModelScope.launch { chatRepository.setSystemPrompt(id, prompt) }
+
+    /** Blank or invalid text hands that option back to the global value. */
+    fun setConversationOptions(id: Long, temperature: String, numCtx: String) = viewModelScope.launch {
+        chatRepository.setGenerationOptions(id, parseTemperature(temperature), parseNumCtx(numCtx))
+    }
+
+    fun setPinned(id: Long, pinned: Boolean) = viewModelScope.launch { chatRepository.setPinned(id, pinned) }
+
+    /** Saved when a drag ends, not per pixel. */
+    fun setSidebarWidth(dp: Int) = viewModelScope.launch { settingsRepository.setSidebarWidth(dp) }
+
+    // endregion
+
+    // region Export and notices
+
+    suspend fun buildExport(format: ExportFormat): ExportDocument? {
+        val id = activeId.value ?: return null
+        val conversation = chatRepository.conversation(id) ?: return null
+        return exportConversation(conversation, chatRepository.messages(id), format, chatRepository.attachments(id))
+    }
+
+    /** A failed write becomes a notice, not a crash. A dismissed dialog is not worth one. */
+    fun export(format: ExportFormat, saver: FileSaver) = viewModelScope.launch {
+        val document = buildExport(format) ?: return@launch
+        try {
+            saver.save(document)?.let { notify(Notice("Exported to $it", Notice.Severity.INFO)) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            notify(Notice("Could not export: ${e.message ?: e::class.simpleName}", Notice.Severity.ERROR))
+        }
+    }
+
+    fun dismissNotice() = notify(null)
+
+    private fun notify(notice: Notice?) = _state.update { it.copy(notice = notice) }
+
+    // endregion
+
+    // region Generation
+
+    /** Everything a request to the model needs. */
+    private data class Turn(val conversationId: Long, val model: String, val settings: TinCanSettings)
+
+    /** Null while a reply is already streaming, or with no conversation or model to use. */
+    private fun nextTurn(): Turn? {
+        val state = _state.value
+        if (state.isGenerating) return null
+        return Turn(activeId.value ?: return null, state.activeModel ?: return null, state.settings)
+    }
+
+    /** Already known to be down: queue without waiting out a timeout, and it sends itself on reconnect. */
+    private suspend fun sendOrQueue(turn: Turn, questionId: Long) {
+        if (connection.isOffline) {
+            chatRepository.markPending(questionId)
+            notify(Notice("Saved. It will send when the server is back.", Notice.Severity.INFO))
+        } else {
+            startGeneration(turn, questionId)
+        }
+    }
+
+    private fun startGeneration(turn: Turn, questionId: Long?, resume: MessageEntity? = null) {
+        generation = viewModelScope.launch { generate(turn, questionId, resume) }
+    }
+
+    private sealed interface Outcome {
+        data class Completed(val stats: GenerationStats?) : Outcome
+        data class Failed(val error: LlmError) : Outcome
+        data object Stopped : Outcome
+    }
+
+    private suspend fun generate(turn: Turn, questionId: Long?, resume: MessageEntity? = null) {
+        val (conversationId, model, settings) = turn
+        // The conversation row owns its prompt and overrides, not the live settings.
         val conversation = chatRepository.conversation(conversationId)
-        val systemPrompt = resolveSystemPrompt(
-            conversationPrompt = conversation?.systemPrompt,
-            globalPrompt = settings.systemPrompt,
-        )
+        val systemPrompt = resolveSystemPrompt(conversation?.systemPrompt, settings.systemPrompt)
         val options = resolveOptions(conversation, settings)
+        // Trimmed here because Ollama drops old turns at num_ctx without saying so.
+        val plan = planContext(chatRepository.historyFor(conversationId), systemPrompt, options.numCtx)
 
-        // Trim locally: Ollama drops old turns at num_ctx without telling the client.
-        val plan = planContext(
-            messages = chatRepository.historyFor(conversationId),
-            systemPrompt = systemPrompt,
-            budgetTokens = options.numCtx,
-        )
-        _state.update { it.copy(context = plan) }
-
-        val assistantId = resumeMessageId
-            ?: chatRepository.beginAssistantMessage(
-                conversationId,
-                model,
-                settingsRepository.serverKeyFor(settings.serverUrl),
-            )
-
+        val replyId = resume?.id
+            ?: chatRepository.beginAssistantMessage(conversationId, model, settingsRepository.serverKeyFor(settings.serverUrl))
+        val sink = StreamSink(resume?.content.orEmpty())
         _state.update {
             it.copy(
-                streamingMessageId = assistantId,
-                streamingText = resumePrefix,
+                context = plan,
+                streamingMessageId = replyId,
+                streamingText = sink.text,
                 streamingThinking = "",
                 isGenerating = true,
                 notice = null,
             )
         }
 
-        val sink = StreamSink(resumePrefix)
-        var stats: GenerationStats? = null
-        var failure: LlmError? = null
-
-        suspend fun publish(force: Boolean = false) {
-            sink.publishIfDue(force)?.let { snapshot ->
-                _state.update { it.copy(streamingText = snapshot.text, streamingThinking = snapshot.thinking) }
-            }
-            sink.persistIfDue(force)?.let { snapshot ->
-                chatRepository.updateStreamingBody(assistantId, snapshot.text, snapshot.thinking.ifEmpty { null })
-            }
+        suspend fun flush(force: Boolean = false) {
+            sink.publishIfDue(force)?.let { s -> _state.update { it.copy(streamingText = s.text, streamingThinking = s.thinking) } }
+            sink.persistIfDue(force)?.let { s -> chatRepository.updateStreamingBody(replyId, s.text, s.thinking.ifEmpty { null }) }
         }
 
-        val request = ChatRequest(
-            model = model,
-            messages = plan.messages,
-            systemPrompt = systemPrompt,
-            options = options,
-        )
-
+        var outcome: Outcome = Outcome.Completed(stats = null)
         try {
             backends.create(settings.serverUrl, modelLoadingThresholdMillis = settings.modelLoadingThresholdMillis)
-                .chat(request)
+                .chat(ChatRequest(model, plan.messages, systemPrompt, options))
                 .collect { event ->
                     when (event) {
-                        is ChatEvent.Token -> { sink.appendText(event.text); publish() }
-                        is ChatEvent.Thinking -> { sink.appendThinking(event.text); publish() }
-                        ChatEvent.ModelLoading -> _state.update {
-                            it.copy(notice = Notice("Loading $model into memory…", Notice.Severity.INFO))
-                        }
-                        is ChatEvent.Completed -> stats = event.stats
-                        is ChatEvent.Failed -> failure = event.error
+                        is ChatEvent.Token -> { sink.appendText(event.text); flush() }
+                        is ChatEvent.Thinking -> { sink.appendThinking(event.text); flush() }
+                        ChatEvent.ModelLoading -> notify(Notice("Loading $model into memory…", Notice.Severity.INFO))
+                        is ChatEvent.Completed -> outcome = Outcome.Completed(event.stats)
+                        is ChatEvent.Failed -> outcome = Outcome.Failed(event.error)
                     }
                 }
-            publish(force = true)
-            finish(assistantId, conversationId, userMessageId, sink, stats, failure, plan)
         } catch (e: CancellationException) {
-            publish(force = true)
-            finish(assistantId, conversationId, userMessageId, sink, null, null, plan, stopped = true)
+            outcome = Outcome.Stopped
             throw e
+        } finally {
+            // Stop cancels this coroutine; the partial reply still has to be saved and closed off.
+            withContext(NonCancellable) {
+                flush(force = true)
+                finish(conversationId, replyId, questionId, sink.text, outcome, plan)
+            }
         }
     }
 
     private suspend fun finish(
-        messageId: Long,
         conversationId: Long,
-        userMessageId: Long?,
-        sink: StreamSink,
-        stats: GenerationStats?,
-        failure: LlmError?,
+        replyId: Long,
+        questionId: Long?,
+        text: String,
+        outcome: Outcome,
         plan: ContextPlan,
-        stopped: Boolean = false,
     ) {
-        val body = sink.text
-        val unreachable = failure?.isConnectivity() == true
+        val failure = (outcome as? Outcome.Failed)?.error
+        val neverArrived = failure?.isConnectivity() == true
 
-        when {
-            body.isBlank() -> {
-                chatRepository.discardMessage(messageId)
-                // Requeue the question only if it never reached the server.
-                userMessageId?.let {
-                    if (unreachable) chatRepository.markPending(it) else chatRepository.markDelivered(it)
-                }
-            }
-            else -> {
-                chatRepository.finishAssistantMessage(
-                    messageId = messageId,
-                    conversationId = conversationId,
-                    content = body,
-                    status = if (failure != null || stopped) MessageStatus.INCOMPLETE else MessageStatus.COMPLETE,
-                    errorCode = failure?.let { it::class.simpleName },
-                    stats = stats,
-                )
-                userMessageId?.let { chatRepository.markDelivered(it) }
-            }
+        if (text.isBlank()) {
+            // No empty bubble; and the question is requeued only if it never reached the server.
+            chatRepository.discardMessage(replyId)
+            questionId?.let { if (neverArrived) chatRepository.markPending(it) else chatRepository.markDelivered(it) }
+        } else {
+            chatRepository.finishAssistantMessage(
+                messageId = replyId,
+                conversationId = conversationId,
+                content = text,
+                status = if (outcome is Outcome.Completed) MessageStatus.COMPLETE else MessageStatus.INCOMPLETE,
+                errorCode = failure?.let { it::class.simpleName },
+                stats = (outcome as? Outcome.Completed)?.stats,
+            )
+            questionId?.let { chatRepository.markDelivered(it) }
         }
 
         _state.update {
@@ -630,8 +495,8 @@ class ChatViewModel(
                 streamingThinking = "",
                 isGenerating = false,
                 notice = when {
-                    failure != null -> failure.toNotice(hasPartialOutput = body.isNotBlank())
-                    stopped -> Notice("Stopped.", Notice.Severity.INFO, NoticeAction.CONTINUE)
+                    failure != null -> failure.toNotice(hasPartialOutput = text.isNotBlank())
+                    outcome == Outcome.Stopped -> Notice("Stopped.", Notice.Severity.INFO, NoticeAction.CONTINUE)
                     plan.trimmed -> Notice(
                         "Trimmed the oldest ${plan.droppedCount} message(s) to fit the context window.",
                         Notice.Severity.INFO,
@@ -641,43 +506,10 @@ class ChatViewModel(
                 },
             )
         }
-
-        if (unreachable) failure?.let(connection::reportUnreachable)
+        if (neverArrived) failure?.let(connection::reportUnreachable)
     }
-}
 
-/**
- * Accumulates a streaming reply and rations updates: the screen refreshes far
- * more often than the disk, so a crash loses at most a fraction of a second.
- */
-private class StreamSink(prefix: String) {
-    private val body = StringBuilder(prefix)
-    private val reasoning = StringBuilder()
-    private var lastPublish = 0L
-    private var lastPersist = 0L
-
-    val text: String get() = body.toString()
-
-    fun appendText(chunk: String) = body.append(chunk).let { }
-    fun appendThinking(chunk: String) = reasoning.append(chunk).let { }
-
-    fun publishIfDue(force: Boolean): Snapshot? = snapshotIfDue(force, lastPublish, UI_INTERVAL_MILLIS)
-        ?.also { lastPublish = now() }
-
-    fun persistIfDue(force: Boolean): Snapshot? = snapshotIfDue(force, lastPersist, DB_INTERVAL_MILLIS)
-        ?.also { lastPersist = now() }
-
-    private fun snapshotIfDue(force: Boolean, last: Long, interval: Long): Snapshot? =
-        if (force || now() - last >= interval) Snapshot(body.toString(), reasoning.toString()) else null
-
-    data class Snapshot(val text: String, val thinking: String)
-
-    private companion object {
-        const val UI_INTERVAL_MILLIS = 30L
-        const val DB_INTERVAL_MILLIS = 500L
-        val uptime = TimeSource.Monotonic.markNow()
-        fun now() = uptime.elapsedNow().inWholeMilliseconds
-    }
+    // endregion
 }
 
 private const val ADDRESS_SETTLE_MILLIS = 800L

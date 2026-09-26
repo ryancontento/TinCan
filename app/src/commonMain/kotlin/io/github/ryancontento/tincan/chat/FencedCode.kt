@@ -3,10 +3,7 @@ package io.github.ryancontento.tincan.chat
 /** The language tag and body of a fenced code block. */
 data class FencedCode(val language: String?, val code: String)
 
-/**
- * Works on raw source rather than the library AST: simpler, version-proof, and
- * preserves the code byte-for-byte, which is the point of a copy button.
- */
+/** Raw source, not the library's AST: it keeps the code byte-for-byte, which is the point of a copy button. */
 fun parseFencedCode(raw: String): FencedCode {
     val lines = raw.lines()
     if (lines.isEmpty()) return FencedCode(null, "")

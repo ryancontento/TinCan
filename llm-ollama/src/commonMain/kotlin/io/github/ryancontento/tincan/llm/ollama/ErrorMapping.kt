@@ -5,33 +5,26 @@ import io.ktor.client.network.sockets.ConnectTimeoutException
 import io.ktor.client.network.sockets.SocketTimeoutException
 import kotlinx.serialization.SerializationException
 
+internal fun Throwable.toLlmError(): LlmError = when (this) {
+    is OllamaException -> error
+    is ConnectTimeoutException -> LlmError.Unreachable
+    is SocketTimeoutException -> LlmError.StreamInterrupted
+    is SerializationException -> LlmError.Unknown(this)
+    else -> platformError()
+}
+
 /**
- * Maps a thrown exception to the typed error the UI branches on.
- *
- * Matches on class *name* because java.net cannot be imported into commonMain
- * without breaking Android compatibility. Stringly typed, but stable: matching
- * on messages failed, since a DNS miss reads "No such host is known" on
- * Windows, "Name or service not known" on Linux, and "nodename nor servname"
- * on macOS.
+ * Matches class names because java.net cannot be imported into commonMain (Android). Messages alone
+ * failed: a DNS miss is worded differently on Windows, Linux and macOS.
  */
-internal fun Throwable.toLlmError(): LlmError {
-    if (this is OllamaException) return error
-    if (this is ConnectTimeoutException) return LlmError.Unreachable
-    if (this is SocketTimeoutException) return LlmError.StreamInterrupted
-    if (this is SerializationException) return LlmError.Unknown(this)
-
-    val text = (message ?: "").lowercase()
-
+private fun Throwable.platformError(): LlmError {
+    val text = message.orEmpty().lowercase()
     return when (this::class.simpleName) {
         "UnknownHostException" -> LlmError.Unreachable
-
-        // One type, two meanings: refused means start Ollama, anything else
-        // means wake the machine.
+        // Refused means start Ollama; anything else means wake the machine.
         "ConnectException" -> if ("refused" in text) LlmError.ConnectionRefused else LlmError.Unreachable
-
         "NoRouteToHostException", "PortUnreachableException" -> LlmError.Unreachable
         "SocketException", "SSLException", "ClosedReceiveChannelException" -> LlmError.StreamInterrupted
-
         else -> when {
             "refused" in text -> LlmError.ConnectionRefused
             "unreachable" in text || "no such host" in text || "timed out" in text -> LlmError.Unreachable

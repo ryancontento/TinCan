@@ -2,12 +2,7 @@ package io.github.ryancontento.tincan.llm
 
 import kotlin.math.ceil
 
-/**
- * Rough token count — not a tokeniser.
- *
- * Pessimistic on purpose: under-estimating lets the server truncate a
- * conversation the client believed was within budget.
- */
+/** Rough and deliberately pessimistic: under-estimating lets the server silently truncate. */
 fun estimateTokens(text: String): Int =
     if (text.isEmpty()) 0 else ceil(text.length / CHARS_PER_TOKEN).toInt()
 
@@ -25,12 +20,7 @@ data class ContextPlan(
         get() = budgetTokens?.takeIf { it > 0 }?.let { estimatedTokens.toFloat() / it }
 }
 
-/**
- * Trims history to fit the window.
- *
- * Ollama truncates at num_ctx silently, so a long conversation develops
- * amnesia that reads as the model being bad. Doing it here means the app knows.
- */
+/** Trims history here because Ollama truncates at num_ctx silently, which reads as the model being bad. */
 fun planContext(
     messages: List<ChatMessage>,
     systemPrompt: String? = null,

@@ -5,11 +5,8 @@ import io.github.ryancontento.tincan.data.SendKey
 enum class ComposerAction { SEND, NEWLINE, IGNORE }
 
 /**
- * By default Enter sends and any accelerator breaks the line; [SendKey.CTRL_ENTER] swaps the two.
- *
- * Pure so the modifier combinations are testable. Unrecognised combinations
- * fall through to NEWLINE deliberately: a stray line break is recoverable,
- * half a sent message is not.
+ * Enter sends and any accelerator breaks the line, or the reverse with [SendKey.CTRL_ENTER]. Anything
+ * unrecognised is a new line: a stray line break is recoverable, half a sent message is not.
  */
 fun composerAction(
     isEnter: Boolean,

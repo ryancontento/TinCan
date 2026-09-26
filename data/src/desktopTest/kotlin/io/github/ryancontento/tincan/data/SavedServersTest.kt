@@ -61,6 +61,18 @@ class SavedServersTest {
     }
 
     @Test
+    fun trusted_link_hosts_are_kept_lowercase_and_can_be_removed() = runTest {
+        withSettings { settings, _ ->
+            settings.trustLinkHost("Ollama.com")
+            settings.trustLinkHost("github.com")
+            assertEquals(setOf("ollama.com", "github.com"), settings.settings.first().trustedLinkHosts)
+
+            settings.untrustLinkHost("OLLAMA.com")
+            assertEquals(setOf("github.com"), settings.settings.first().trustedLinkHosts)
+        }
+    }
+
+    @Test
     fun a_blank_name_falls_back_to_the_address() {
         assertEquals("http://macbook:11434", emptyList<SavedServer>().withServer("  ", " http://macbook:11434 ").single().name)
     }

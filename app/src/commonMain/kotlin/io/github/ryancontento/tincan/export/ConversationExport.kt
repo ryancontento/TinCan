@@ -105,10 +105,7 @@ private fun toJson(
         ),
     )
 
-/**
- * The server key is deliberately absent: it identifies a machine and means
- * nothing outside the install that wrote it.
- */
+/** No server key: it identifies a machine and means nothing outside the install that wrote it. */
 @Serializable
 private data class ExportedConversation(
     val title: String,

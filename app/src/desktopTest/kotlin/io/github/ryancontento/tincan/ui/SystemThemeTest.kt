@@ -4,11 +4,7 @@ import java.util.Locale
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-/**
- * The detection shells out to whatever the platform provides, so the only
- * honest test is to ask the platform the same question a second way and check
- * the two agree.
- */
+/** Detection shells out, so the honest check is asking the platform a second way and comparing. */
 class SystemThemeTest {
 
     @Test
@@ -16,8 +12,7 @@ class SystemThemeTest {
         val os = System.getProperty("os.name").orEmpty().lowercase(Locale.ROOT)
         val expected = when {
             os.contains("win") -> windowsAppsUseLightTheme()?.let { it == 0 }
-            // Only Windows is checked independently here; elsewhere the test
-            // asserts nothing rather than re-implementing the same guess twice.
+            // Only Windows has an independent check; elsewhere it would repeat the same guess.
             else -> null
         } ?: return
 
@@ -26,7 +21,6 @@ class SystemThemeTest {
 
     @Test
     fun an_unreadable_setting_does_not_throw() {
-        // Whatever this machine reports, asking must always produce an answer.
         systemPrefersDark()
     }
 

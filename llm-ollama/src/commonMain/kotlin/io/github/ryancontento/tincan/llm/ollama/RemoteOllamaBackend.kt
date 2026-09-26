@@ -24,6 +24,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import io.ktor.http.isSuccess
 import io.ktor.utils.io.readUTF8Line
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -31,8 +32,11 @@ import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.DeserializationStrategy
 import kotlinx.serialization.SerializationException
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.io.encoding.Base64
+import kotlin.io.encoding.ExperimentalEncodingApi
 import kotlin.time.TimeSource
 
 class RemoteOllamaBackend internal constructor(
@@ -68,68 +72,31 @@ class RemoteOllamaBackend internal constructor(
         }
     }
 
-    override suspend fun listModels(): Result<List<ModelInfo>> = try {
+    override suspend fun listModels(): Result<List<ModelInfo>> = call {
         val response = client.get("$root/api/tags")
         if (!response.status.isSuccess()) {
-            Result.failure(OllamaException(LlmError.Server(response.status.value, response.bodyAsText())))
-        } else {
-            val tags: OllamaTagsResponse = response.body()
-            Result.success(
-                tags.models.map { tag ->
-                    ModelInfo(
-                        id = tag.name,
-                        displayName = tag.name,
-                        sizeBytes = tag.size,
-                        family = tag.details?.family,
-                        quantization = tag.details?.quantizationLevel,
-                        contextLength = tag.details?.contextLength,
-                        parameterSize = tag.details?.parameterSize,
-                        capabilities = tag.capabilities.toSet(),
-                    )
-                }.sortedBy { it.displayName },
-            )
+            throw OllamaException(LlmError.Server(response.status.value, response.bodyAsText()))
         }
-    } catch (e: CancellationException) {
-        throw e
-    } catch (e: Throwable) {
-        Result.failure(OllamaException(e.toLlmError()))
+        response.body<OllamaTagsResponse>().models.map { tag ->
+            ModelInfo(
+                id = tag.name,
+                sizeBytes = tag.size,
+                family = tag.details?.family,
+                quantization = tag.details?.quantizationLevel,
+                contextLength = tag.details?.contextLength,
+                parameterSize = tag.details?.parameterSize,
+                capabilities = tag.capabilities.toSet(),
+            )
+        }.sortedBy { it.displayName }
     }
 
+    // channelFlow, not flow: emissions happen inside execute { }, a different coroutine context.
     override fun chat(request: ChatRequest): Flow<ChatEvent> = channelFlow {
-        // channelFlow, not flow: emissions happen inside execute { }, a
-        // different coroutine context than the collector.
-
         var sawFirstToken = false
-
-        // Captured so the loading watcher can be launched from inside execute,
-        // where `this` is the response rather than the producer scope.
-        val producer = this
+        val producer = this   // inside execute, `this` is the response
 
         try {
-            val body = OllamaChatRequest(
-                model = request.model,
-                messages = buildList {
-                    request.systemPrompt?.takeIf { it.isNotBlank() }?.let {
-                        add(OllamaMessage(role = "system", content = it))
-                    }
-                    request.messages.forEach {
-                        add(
-                            OllamaMessage(
-                                role = it.role.wire(),
-                                content = it.content,
-                                images = it.images.takeIf { images -> images.isNotEmpty() }?.map(::base64),
-                            ),
-                        )
-                    }
-                },
-                stream = true,
-                options = OllamaOptions(
-                    temperature = request.options.temperature,
-                    numCtx = request.options.numCtx,
-                ),
-                keepAlive = request.options.keepAlive,
-            )
-
+            val body = request.toWire()
             client.preparePost("$root/api/chat") {
                 contentType(ContentType.Application.Json)
                 setBody(body)
@@ -140,9 +107,7 @@ class RemoteOllamaBackend internal constructor(
                     return@execute
                 }
 
-                // Clock starts here, not at send: the server has accepted, so
-                // waiting now means loading. Earlier, it also fired on errors.
-                // Zero or less disables the inference.
+                // Timed from acceptance, not send, so an error never reads as loading. <= 0 disables.
                 val loadingWatcher = if (modelLoadingThresholdMillis > 0) {
                     producer.launch {
                         delay(modelLoadingThresholdMillis)
@@ -156,43 +121,37 @@ class RemoteOllamaBackend internal constructor(
                 var stats: GenerationStats? = null
 
                 try {
-                while (!channel.isClosedForRead && isActive) {
-                    val line = channel.readUTF8Line() ?: break
-                    if (line.isBlank()) continue
+                    while (!channel.isClosedForRead && isActive) {
+                        val line = channel.readUTF8Line() ?: break
+                        if (line.isBlank()) continue
+                        val chunk = decodeOrNull(OllamaChatChunk.serializer(), line) ?: continue
 
-                    val chunk = try {
-                        OllamaHttpClient.json.decodeFromString(OllamaChatChunk.serializer(), line)
-                    } catch (e: SerializationException) {
-                        // A malformed line is not fatal; keep what already arrived.
-                        continue
+                        chunk.message?.thinking?.takeIf { it.isNotEmpty() }?.let {
+                            send(ChatEvent.Thinking(it))
+                        }
+                        chunk.message?.content?.takeIf { it.isNotEmpty() }?.let {
+                            sawFirstToken = true
+                            send(ChatEvent.Token(it))
+                        }
+
+                        if (chunk.done) {
+                            stats = GenerationStats(
+                                promptTokens = chunk.promptEvalCount,
+                                completionTokens = chunk.evalCount,
+                                totalDurationNanos = chunk.totalDuration,
+                                loadDurationNanos = chunk.loadDuration,
+                                evalDurationNanos = chunk.evalDuration,
+                                doneReason = chunk.doneReason,
+                            )
+                            break
+                        }
                     }
 
-                    chunk.message?.thinking?.takeIf { it.isNotEmpty() }?.let {
-                        send(ChatEvent.Thinking(it))
-                    }
-                    chunk.message?.content?.takeIf { it.isNotEmpty() }?.let {
-                        sawFirstToken = true
-                        send(ChatEvent.Token(it))
-                    }
-
-                    if (chunk.done) {
-                        stats = GenerationStats(
-                            promptTokens = chunk.promptEvalCount,
-                            completionTokens = chunk.evalCount,
-                            totalDurationNanos = chunk.totalDuration,
-                            loadDurationNanos = chunk.loadDuration,
-                            evalDurationNanos = chunk.evalDuration,
-                            doneReason = chunk.doneReason,
-                        )
-                        break
-                    }
-                }
-
-                send(
-                    if (stats != null) ChatEvent.Completed(stats)
-                    // Closed without done:true — the socket died partway.
-                    else ChatEvent.Failed(LlmError.StreamInterrupted),
-                )
+                    send(
+                        if (stats != null) ChatEvent.Completed(stats)
+                        // Closed without done:true — the socket died partway.
+                        else ChatEvent.Failed(LlmError.StreamInterrupted),
+                    )
                 } finally {
                     loadingWatcher?.cancel()
                 }
@@ -206,35 +165,30 @@ class RemoteOllamaBackend internal constructor(
 
     override suspend fun loadedModels(): Result<List<LoadedModel>> = call {
         val response = client.get("$root/api/ps")
-        response.failureOrNull()?.let { return@call Result.failure(OllamaException(it)) }
-        val ps: OllamaPsResponse = response.body()
-        Result.success(
-            ps.models.map {
-                LoadedModel(
-                    id = it.name,
-                    sizeBytes = it.size,
-                    vramBytes = it.sizeVram,
-                    expiresAt = it.expiresAt,
-                    contextLength = it.contextLength,
-                )
-            },
-        )
+        response.ensureSuccess()
+        response.body<OllamaPsResponse>().models.map {
+            LoadedModel(
+                id = it.name,
+                sizeBytes = it.size,
+                vramBytes = it.sizeVram,
+                expiresAt = it.expiresAt,
+                contextLength = it.contextLength,
+            )
+        }
     }
 
     override suspend fun unloadModel(model: String): Result<Unit> = call {
-        val response = client.post("$root/api/generate") {
+        client.post("$root/api/generate") {
             contentType(ContentType.Application.Json)
             setBody(OllamaUnloadRequest(model, keepAlive = 0))
-        }
-        response.failureOrNull()?.let { Result.failure(OllamaException(it)) } ?: Result.success(Unit)
+        }.ensureSuccess()
     }
 
     override suspend fun deleteModel(model: String): Result<Unit> = call {
-        val response = client.delete("$root/api/delete") {
+        client.delete("$root/api/delete") {
             contentType(ContentType.Application.Json)
             setBody(OllamaModelRequest(model))
-        }
-        response.failureOrNull()?.let { Result.failure(OllamaException(it)) } ?: Result.success(Unit)
+        }.ensureSuccess()
     }
 
     override fun pullModel(model: String): Flow<PullEvent> = channelFlow {
@@ -251,11 +205,7 @@ class RemoteOllamaBackend internal constructor(
                 while (!channel.isClosedForRead && isActive) {
                     val line = channel.readUTF8Line() ?: break
                     if (line.isBlank()) continue
-                    val chunk = try {
-                        OllamaHttpClient.json.decodeFromString(OllamaPullChunk.serializer(), line)
-                    } catch (e: SerializationException) {
-                        continue
-                    }
+                    val chunk = decodeOrNull(OllamaPullChunk.serializer(), line) ?: continue
                     when {
                         chunk.error != null -> { send(PullEvent.Failed(LlmError.Rejected(chunk.error))); return@execute }
                         chunk.status == "success" -> { send(PullEvent.Done); return@execute }
@@ -282,19 +232,24 @@ class RemoteOllamaBackend internal constructor(
         return if (message != null) LlmError.Rejected(message) else LlmError.Server(status.value, text)
     }
 
-    private inline fun <T> call(block: () -> Result<T>): Result<T> = try {
-        block()
+    private suspend fun HttpResponse.ensureSuccess() {
+        failureOrNull()?.let { throw OllamaException(it) }
+    }
+
+    private inline fun <T> call(block: () -> T): Result<T> = try {
+        Result.success(block())
     } catch (e: CancellationException) {
         throw e
     } catch (e: Throwable) {
         Result.failure(OllamaException(e.toLlmError()))
     }
 
-    private fun mapHttpError(status: HttpStatusCode, body: String?, model: String): LlmError = when {
-        status == HttpStatusCode.NotFound && body?.contains("model", ignoreCase = true) == true ->
+    private fun mapHttpError(status: HttpStatusCode, body: String?, model: String): LlmError =
+        if (status == HttpStatusCode.NotFound && body?.contains("model", ignoreCase = true) == true) {
             LlmError.ModelNotFound(model)
-        else -> LlmError.Server(status.value, body)
-    }
+        } else {
+            LlmError.Server(status.value, body)
+        }
 
     private companion object {
         const val PROBE_TIMEOUT_MILLIS = 2_000L
@@ -303,13 +258,37 @@ class RemoteOllamaBackend internal constructor(
 
 class OllamaException(val error: LlmError) : Exception(error.toString())
 
+private fun ChatRequest.toWire() = OllamaChatRequest(
+    model = model,
+    messages = buildList {
+        systemPrompt?.takeIf { it.isNotBlank() }?.let { add(OllamaMessage(role = "system", content = it)) }
+        for (message in this@toWire.messages) {
+            add(
+                OllamaMessage(
+                    role = message.role.wire(),
+                    content = message.content,
+                    images = message.images.takeIf { it.isNotEmpty() }?.map(::base64),
+                ),
+            )
+        }
+    },
+    stream = true,
+    options = OllamaOptions(temperature = options.temperature, numCtx = options.numCtx),
+    keepAlive = options.keepAlive,
+)
+
+/** A malformed NDJSON line is skipped, not fatal, so output that already arrived is kept. */
+private fun <T> decodeOrNull(deserializer: DeserializationStrategy<T>, line: String): T? = try {
+    OllamaHttpClient.json.decodeFromString(deserializer, line)
+} catch (e: SerializationException) {
+    null
+}
+
 private fun Role.wire(): String = when (this) {
     Role.USER -> "user"
     Role.ASSISTANT -> "assistant"
     Role.SYSTEM -> "system"
 }
 
-private fun HttpStatusCode.isSuccess(): Boolean = value in 200..299
-
-@OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
-private fun base64(bytes: ByteArray): String = kotlin.io.encoding.Base64.Default.encode(bytes)
+@OptIn(ExperimentalEncodingApi::class)
+private fun base64(bytes: ByteArray): String = Base64.Default.encode(bytes)

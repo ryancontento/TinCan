@@ -42,20 +42,21 @@ In order:
    ([ComposerKeys.kt](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/chat/ComposerKeys.kt)).
 2. **`ChatViewModel.send()`** creates the conversation if needed, writes the
    question to the database, and decides whether to send or queue
-   ([ChatViewModel.kt:280](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/chat/ChatViewModel.kt#L280)).
+   ([ChatViewModel.kt](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/chat/ChatViewModel.kt)).
 3. **`generate()`** resolves the system prompt from the conversation row, trims
    history to fit the context window, opens the assistant row, and collects the
    stream
-   ([ChatViewModel.kt:508](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/chat/ChatViewModel.kt#L508)).
+   ([ChatViewModel.kt](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/chat/ChatViewModel.kt)).
 4. **`RemoteOllamaBackend.chat()`** does the HTTP and turns NDJSON lines into
    typed events
-   ([RemoteOllamaBackend.kt:98](../llm-ollama/src/commonMain/kotlin/io/github/ryancontento/tincan/llm/ollama/RemoteOllamaBackend.kt#L98)).
-5. **`StreamSink`**, private at the bottom of `ChatViewModel`, rations updates:
-   the screen refreshes every 30ms, the database every 500ms. A crash loses a
-   fraction of a second, not the reply.
-6. **`finish()`** decides what the row ends up as — complete, incomplete, or
-   deleted and the question requeued
-   ([ChatViewModel.kt:592](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/chat/ChatViewModel.kt#L592)).
+   ([RemoteOllamaBackend.kt](../llm-ollama/src/commonMain/kotlin/io/github/ryancontento/tincan/llm/ollama/RemoteOllamaBackend.kt)).
+5. **`StreamSink`** rations updates: the screen refreshes every 30ms, the
+   database every 500ms. A crash loses a fraction of a second, not the reply
+   ([StreamSink.kt](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/chat/StreamSink.kt)).
+6. **`finish()`** turns the `Outcome` — completed, failed or stopped — into the
+   row's status, a requeue decision and one notice. It runs non-cancellable, so
+   Stop still saves the partial reply
+   ([ChatViewModel.kt](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/chat/ChatViewModel.kt)).
 
 ## Features, and where to start reading
 
@@ -63,12 +64,14 @@ In order:
 
 | | |
 |---|---|
-| Send / stop / stream | [ChatViewModel.kt:280](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/chat/ChatViewModel.kt#L280) |
+| Send / stop / stream | [ChatViewModel.kt](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/chat/ChatViewModel.kt), in regions: observing, composing, replies, generation |
+| The screen | [ChatScreen.kt](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/chat/ChatScreen.kt) lays out [ChatTopBar.kt](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/chat/ChatTopBar.kt), [ChatBanners.kt](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/chat/ChatBanners.kt), [Transcript.kt](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/chat/Transcript.kt) and [Composer.kt](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/chat/Composer.kt) |
+| Screen state | [ChatUiState.kt](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/chat/ChatUiState.kt) |
 | Ollama HTTP and NDJSON | [RemoteOllamaBackend.kt](../llm-ollama/src/commonMain/kotlin/io/github/ryancontento/tincan/llm/ollama/RemoteOllamaBackend.kt) |
-| The interface everything talks to | [LlmBackend.kt:12](../llm-api/src/commonMain/kotlin/io/github/ryancontento/tincan/llm/LlmBackend.kt#L12) |
+| The interface everything talks to | [LlmBackend.kt](../llm-api/src/commonMain/kotlin/io/github/ryancontento/tincan/llm/LlmBackend.kt) |
 
 `ChatEvent` and `LlmError` are the whole contract between UI and network
-([LlmBackend.kt:59](../llm-api/src/commonMain/kotlin/io/github/ryancontento/tincan/llm/LlmBackend.kt#L59)).
+([LlmBackend.kt](../llm-api/src/commonMain/kotlin/io/github/ryancontento/tincan/llm/LlmBackend.kt)).
 Adding a second backend means implementing `LlmBackend` and nothing else.
 
 ### Markdown and code blocks
@@ -85,7 +88,7 @@ fence parsing is separate and pure
 ### The unreachable path
 
 `ConnectionMonitor` owns probing, offline state and the reconnect poll
-([ConnectionMonitor.kt:23](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/chat/ConnectionMonitor.kt#L23)).
+([ConnectionMonitor.kt](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/chat/ConnectionMonitor.kt)).
 Errors become a sentence and at most one action in
 [Notice.kt](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/chat/Notice.kt).
 Which exception maps to which error is decided by class name, not message,
@@ -94,7 +97,7 @@ because a DNS miss reads differently on every OS
 
 A message composed while offline is stored `PENDING` and sent on reconnect —
 start at `deliverQueued()`
-([ChatViewModel.kt:336](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/chat/ChatViewModel.kt#L336)).
+([ChatViewModel.kt](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/chat/ChatViewModel.kt)).
 
 ### Per-conversation prompt, model, temperature and context window
 
@@ -122,7 +125,7 @@ cascading with it
 Ollama keeps no state, so `historyFor()` re-attaches every earlier image on
 every turn, and the context estimate charges each one `IMAGE_TOKENS`. Sending
 to a model whose capabilities omit `vision` is refused before anything is
-written ([ChatViewModel.kt:280](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/chat/ChatViewModel.kt#L280)).
+written ([ChatViewModel.kt](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/chat/ChatViewModel.kt)).
 
 ### Saved servers
 
@@ -130,13 +133,13 @@ A named list beside the one current address
 ([SavedServers.kt](../data/src/commonMain/kotlin/io/github/ryancontento/tincan/data/SavedServers.kt)),
 stored as JSON in DataStore. The address in the top bar is the switcher; the
 list is managed in Settings. Switching is refused mid-reply
-([ChatViewModel.kt:247](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/chat/ChatViewModel.kt#L247)).
+([ChatViewModel.kt](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/chat/ChatViewModel.kt)).
 
 ### Model manager
 
 Loaded models, unload, pull with progress, and delete, over `/api/ps`,
 `/api/generate` with `keep_alive: 0`, `/api/pull` and `/api/delete`
-([RemoteOllamaBackend.kt:207](../llm-ollama/src/commonMain/kotlin/io/github/ryancontento/tincan/llm/ollama/RemoteOllamaBackend.kt#L207)).
+([RemoteOllamaBackend.kt](../llm-ollama/src/commonMain/kotlin/io/github/ryancontento/tincan/llm/ollama/RemoteOllamaBackend.kt)).
 A failed pull still answers 200 and puts the error in the stream, which is
 why pull failure is read per line. Screen and state are in
 [models/](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/models/).
@@ -153,9 +156,9 @@ its age says it belongs.
 
 `LIKE` over the messages table, not FTS — instant at one person's history and
 it costs no schema version
-([ChatDao.kt:136](../data/src/commonMain/kotlin/io/github/ryancontento/tincan/data/db/ChatDao.kt#L136)).
+([ChatDao.kt](../data/src/commonMain/kotlin/io/github/ryancontento/tincan/data/db/ChatDao.kt)).
 Wildcards in the term are escaped in
-[ChatRepository.kt:218](../data/src/commonMain/kotlin/io/github/ryancontento/tincan/data/ChatRepository.kt#L218).
+[ChatRepository.kt](../data/src/commonMain/kotlin/io/github/ryancontento/tincan/data/ChatRepository.kt).
 Snippet extraction and match highlighting are pure
 ([SearchSnippet.kt](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/chat/SearchSnippet.kt)).
 
@@ -163,13 +166,12 @@ Snippet extraction and match highlighting are pure
 
 Both rewind the transcript before asking again, so the model never sees the
 turns being replaced
-([ChatViewModel.kt:372](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/chat/ChatViewModel.kt#L372)
-and
-[:403](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/chat/ChatViewModel.kt#L403)).
+(`regenerateLastReply()` and `editAndResend()` in
+[ChatViewModel.kt](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/chat/ChatViewModel.kt)).
 
 Regenerate deletes the old reply *before* the request, which puts it at risk
 for the length of the call — so a failed retry restores it
-([ChatRepository.kt:200](../data/src/commonMain/kotlin/io/github/ryancontento/tincan/data/ChatRepository.kt#L200)).
+([ChatRepository.kt](../data/src/commonMain/kotlin/io/github/ryancontento/tincan/data/ChatRepository.kt)).
 Do not remove that without reading the test.
 
 ### Export
@@ -184,7 +186,7 @@ with an AWT implementation in `desktopMain`.
 ### Context window
 
 Ollama silently drops old turns at `num_ctx`, so trimming happens here instead
-([ContextWindow.kt:34](../llm-api/src/commonMain/kotlin/io/github/ryancontento/tincan/llm/ContextWindow.kt#L34)).
+([ContextWindow.kt](../llm-api/src/commonMain/kotlin/io/github/ryancontento/tincan/llm/ContextWindow.kt)).
 The system prompt is never dropped but is charged; the newest message is kept
 even if oversized; a null budget means no trim and an explicit warning.
 
@@ -194,7 +196,7 @@ Message rows record an opaque salted key, never a server address
 ([ServerKey.kt](../data/src/commonMain/kotlin/io/github/ryancontento/tincan/data/ServerKey.kt)).
 A startup sweep converts rows written by older versions and then rebuilds the
 file, because an `UPDATE` only supersedes the old bytes
-([ChatRepository.kt:50](../data/src/commonMain/kotlin/io/github/ryancontento/tincan/data/ChatRepository.kt#L50)).
+([ChatRepository.kt](../data/src/commonMain/kotlin/io/github/ryancontento/tincan/data/ChatRepository.kt)).
 
 ### The look
 
@@ -202,7 +204,7 @@ All controls go through one file so density stays consistent
 ([Controls.kt](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/ui/Controls.kt)):
 `TinField`, `TinButton`, `TinToolbarButton`, `TinIconButton`, `TinSegmented`,
 `TinFormRow`, `TinSectionLabel`, `TinDivider`. Sizes are in `Metrics`
-([:52](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/ui/Controls.kt#L52)).
+(top of the same file).
 
 Colours, type scale and shapes are in
 [Theme.kt](../app/src/commonMain/kotlin/io/github/ryancontento/tincan/ui/Theme.kt);

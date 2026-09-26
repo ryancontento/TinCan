@@ -23,17 +23,8 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertSame
 
 /**
- * Builds the real dependency graph and resolves everything the app resolves.
- *
- * This exists because of a crash the rest of the suite could not see. Adding a
- * defaulted `reconnectPollMillis: Long` to ChatViewModel broke startup:
- * Koin's reflective `viewModelOf` resolves every constructor parameter from the
- * graph and ignores Kotlin default values, so it went looking for a Long
- * binding and threw. Seventy-four passing tests said nothing, because they all
- * construct view models directly and never touch Koin.
- *
- * A wiring mistake is invisible to unit tests and fatal at launch, which makes
- * it exactly the thing worth one test.
+ * Guards a startup crash unit tests could not see: `viewModelOf` ignored a defaulted ChatViewModel
+ * parameter and looked for a Long binding. Other tests build view models directly, never through Koin.
  */
 class AppModuleTest {
 
@@ -61,18 +52,16 @@ class AppModuleTest {
         assertNotNull(koin.get<ChatRepository>())
         assertNotNull(koin.get<LlmBackendProvider>())
 
-        // Bound only by the platform module, so a missing actual fails here
-        // rather than the first time someone clicks Export.
+        // Platform-module bindings: a missing actual fails here, not on the first Export.
         assertNotNull(koin.get<FileSaver>())
         assertNotNull(koin.get<FilePicker>())
 
-        // The two that broke. Resolving them is the whole point of this test.
+        // The view models are what broke; resolving them is the point of this test.
         val chatViewModel = assertNotNull(koin.get<ChatViewModel>())
         val settingsViewModel = assertNotNull(koin.get<SettingsViewModel>())
         val modelsViewModel = assertNotNull(koin.get<ModelsViewModel>())
 
-        // Resolving a view model starts its collectors, and tearDown is about to
-        // take Dispatchers.Main away from them.
+        // Stop their collectors before tearDown takes Dispatchers.Main away.
         chatViewModel.stop()
         settingsViewModel.stop()
         modelsViewModel.stop()
@@ -82,8 +71,6 @@ class AppModuleTest {
     fun the_repositories_are_singletons_because_both_hold_exclusive_file_locks() {
         val koin = startKoin { modules(appModule(dir.absolutePath), platformModule()) }.koin
 
-        // Room holds a file lock and DataStore refuses a second instance over
-        // the same file, so a second copy of either would fail at runtime.
         assertSame(koin.get<ChatRepository>(), koin.get<ChatRepository>())
         assertSame(koin.get<SettingsRepository>(), koin.get<SettingsRepository>())
         assertSame(koin.get<LlmBackendProvider>(), koin.get<LlmBackendProvider>())

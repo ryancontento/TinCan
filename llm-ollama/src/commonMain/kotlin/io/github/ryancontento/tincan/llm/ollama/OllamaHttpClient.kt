@@ -1,11 +1,12 @@
 package io.github.ryancontento.tincan.llm.ollama
 
 import io.ktor.client.HttpClient
+import io.ktor.client.HttpClientConfig
 import io.ktor.client.engine.HttpClientEngine
+import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.HttpTimeoutConfig
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 
@@ -26,16 +27,15 @@ internal object OllamaHttpClient {
         connectTimeoutMillis: Long = 4_000,
         socketTimeoutMillis: Long = 120_000,
     ): HttpClient {
-        val configure: io.ktor.client.HttpClientConfig<*>.() -> Unit = {
+        val configure: HttpClientConfig<*>.() -> Unit = {
             install(ContentNegotiation) { json(json) }
             install(HttpTimeout) {
-                // Must be infinite: this bounds the whole call including the
-                // streamed body, so any finite value kills long generations.
+                // Must be infinite: it bounds the whole streamed body, so any finite value kills long replies.
                 requestTimeoutMillis = HttpTimeoutConfig.INFINITE_TIMEOUT_MS
                 this.connectTimeoutMillis = connectTimeoutMillis
                 this.socketTimeoutMillis = socketTimeoutMillis
             }
-            expectSuccess = false   // map status codes ourselves into LlmError
+            expectSuccess = false   // status codes are mapped to LlmError by the backend
         }
         return if (engine != null) HttpClient(engine, configure) else HttpClient(OkHttp, configure)
     }

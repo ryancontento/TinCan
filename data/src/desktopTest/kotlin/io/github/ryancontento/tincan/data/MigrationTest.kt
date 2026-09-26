@@ -17,10 +17,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 
-/**
- * Builds a real version-1 database from the committed v1 schema, the file every
- * existing install has, then opens it with the current code.
- */
+/** Builds the v1 database every existing install has from the committed schema, then opens it with current code. */
 class MigrationTest {
 
     @Test

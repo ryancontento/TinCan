@@ -6,24 +6,12 @@ import java.nio.channels.FileLock
 import java.nio.channels.OverlappingFileLockException
 
 /**
- * Whether this process is the copy of TinCan that gets to open the data
- * directory.
- *
- * Two copies over one directory is not a cosmetic problem: Room takes its own
- * lock on the database file and DataStore refuses a second instance over the
- * same file, so the second copy either fights the first or dies partway
- * through startup. That has already happened once during testing.
- *
- * A lock file rather than a pid file, because the OS drops the lock when the
- * process exits — including a crash or a kill — so there is no stale state to
- * reason about on the next launch.
+ * Whether this process may open the data directory; Room and DataStore both break under a second copy.
+ * A lock file, not a pid file: the OS drops the lock on any exit, even a crash, so nothing goes stale.
  */
 sealed interface SingleInstance {
 
-    /**
-     * This process owns the directory. Hold it for as long as the app runs;
-     * releasing early re-opens the window the lock exists to close.
-     */
+    /** Hold for the app's lifetime; releasing early lets a second copy in. */
     class Acquired internal constructor(
         private val handle: RandomAccessFile,
         private val lock: FileLock,
@@ -37,18 +25,21 @@ sealed interface SingleInstance {
     /** Another copy holds the lock. This process must not touch the data. */
     data object AlreadyRunning : SingleInstance
 
-    /**
-     * The lock file itself could not be used — an unwritable directory, a
-     * filesystem with no lock support. Start anyway: refusing to launch over a
-     * failed precaution is worse than the collision it was guarding against.
-     */
+    /** The lock itself failed (unwritable folder, no lock support). Start anyway: a failed precaution is no reason to refuse. */
     data class Undeterminable(val cause: Throwable) : SingleInstance
 }
 
 /**
- * Tries to claim [directory] for this process. Call before anything opens the
- * database or the settings file.
+ * [acquireSingleInstance], with the claim kept for the life of the process. An unreferenced handle is
+ * garbage-collected, which closes the file and frees the lock: a second copy got in that way once.
  */
+fun claimDataDirectory(directory: String): SingleInstance =
+    acquireSingleInstance(directory).also { if (it is SingleInstance.Acquired) heldClaim = it }
+
+@Volatile
+private var heldClaim: SingleInstance.Acquired? = null
+
+/** Call before anything opens the database or the settings file. The caller must keep the result reachable. */
 fun acquireSingleInstance(directory: String): SingleInstance {
     val lockFile = File(directory).also { it.mkdirs() }.resolve(LOCK_FILE_NAME)
 
@@ -59,8 +50,7 @@ fun acquireSingleInstance(directory: String): SingleInstance {
     }
 
     return try {
-        // null means another process holds it; the exception means another
-        // thread of THIS process does, which is the same answer to the caller.
+        // null: another process holds it. OverlappingFileLockException: this process does. Same answer.
         val lock = handle.channel.tryLock()
         if (lock == null) {
             handle.close()

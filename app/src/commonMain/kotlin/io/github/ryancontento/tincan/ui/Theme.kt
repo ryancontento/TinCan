@@ -1,5 +1,6 @@
 package io.github.ryancontento.tincan.ui
 
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
@@ -15,9 +16,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.ryancontento.tincan.data.ThemePreference
 
-// Graphite rather than navy, so the window reads as a tool and not as a
-// Material demo. The cyan is the line between the cans on the app icon, and is
-// spent only on the selected item and the primary action.
+// Graphite, not navy, so it reads as a tool. Cyan (from the app icon) marks only selection and the primary action.
 private val Ink = Color(0xFF16181D)
 private val Panel = Color(0xFF1A1D23)
 private val Raised = Color(0xFF21252C)
@@ -69,10 +68,7 @@ private val Light = lightColorScheme(
     onTertiaryContainer = Color(0xFF1F2227),
 )
 
-/**
- * Smaller than Material's defaults throughout: those are sized for a thumb on a
- * phone, and a desktop window that borrows them wastes most of its space.
- */
+/** Smaller than Material's thumb-sized defaults, which waste most of a desktop window. */
 private val DesktopType = Typography().run {
     copy(
         titleLarge = titleLarge.copy(fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold),
@@ -88,11 +84,11 @@ private val DesktopType = Typography().run {
 
 /** Corners this tight read as a desktop widget; a pill reads as a phone button. */
 private val DesktopShapes = Shapes(
-    extraSmall = androidx.compose.foundation.shape.RoundedCornerShape(3.dp),
-    small = androidx.compose.foundation.shape.RoundedCornerShape(4.dp),
-    medium = androidx.compose.foundation.shape.RoundedCornerShape(5.dp),
-    large = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
-    extraLarge = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+    extraSmall = RoundedCornerShape(3.dp),
+    small = RoundedCornerShape(4.dp),
+    medium = RoundedCornerShape(5.dp),
+    large = RoundedCornerShape(6.dp),
+    extraLarge = RoundedCornerShape(8.dp),
 )
 
 /** Technical values line up and stay distinguishable from prose in monospace. */
@@ -100,7 +96,7 @@ val MonoStyle: TextStyle = TextStyle(fontFamily = FontFamily.Monospace)
 
 @Composable
 fun TinCanTheme(preference: ThemePreference = ThemePreference.SYSTEM, content: @Composable () -> Unit) {
-    // Remembered so the platform lookup happens once, not on every recomposition.
+    // Read once per launch (the lookup shells out); an OS theme change applies on restart.
     val systemDark = remember { systemPrefersDark() }
     val dark = when (preference) {
         ThemePreference.SYSTEM -> systemDark

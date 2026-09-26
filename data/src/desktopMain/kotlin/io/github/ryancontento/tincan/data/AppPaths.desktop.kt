@@ -4,13 +4,7 @@ import java.io.File
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermissions
 
-/**
- * The one place in the project where Windows, macOS and Linux differ.
- *
- * macOS is included even though it is not a day-one shipping target: leaving it
- * out would save nothing and would silently put the database in the wrong place
- * the first time someone runs `./gradlew run` on a Mac.
- */
+/** macOS is covered though not shipped, so `./gradlew run` on a Mac does not misplace the database. */
 actual fun appDataDir(): String {
     val os = System.getProperty("os.name").orEmpty().lowercase()
     val home = System.getProperty("user.home").orEmpty()
@@ -32,6 +26,6 @@ actual fun appDataDir(): String {
 private fun restrictToOwner(dir: File) {
     val path = dir.toPath()
     // Windows has no POSIX view; %LOCALAPPDATA% is already private to the user.
-    if (!path.fileSystem.supportedFileAttributeViews().contains("posix")) return
+    if ("posix" !in path.fileSystem.supportedFileAttributeViews()) return
     runCatching { Files.setPosixFilePermissions(path, PosixFilePermissions.fromString("rwx------")) }
 }

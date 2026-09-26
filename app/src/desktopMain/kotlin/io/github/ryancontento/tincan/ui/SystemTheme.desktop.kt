@@ -4,18 +4,15 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 /**
- * Three operating systems, three unrelated answers, and no common API.
- *
- * Every branch falls back to dark, which is both this app's previous behaviour
- * and the safer guess: light text on a dark ground stays readable if the guess
- * is wrong, where the reverse does not.
+ * Windows and Linux fall back to dark, which stays readable if the guess is wrong. macOS only sets
+ * AppleInterfaceStyle in dark mode, so there a missing key genuinely means light.
  */
 actual fun systemPrefersDark(): Boolean {
     val os = System.getProperty("os.name").orEmpty().lowercase(Locale.ROOT)
     return when {
         os.contains("win") -> windowsPrefersDark()
-        os.contains("mac") -> readCommand("defaults", "read", "-g", "AppleInterfaceStyle")
-            ?.contains("dark", ignoreCase = true) ?: false
+        os.contains("mac") ->
+            readCommand("defaults", "read", "-g", "AppleInterfaceStyle")?.contains("dark", ignoreCase = true) == true
         else -> linuxPrefersDark()
     }
 }
@@ -34,10 +31,7 @@ private fun windowsPrefersDark(): Boolean {
     return value?.toIntOrNull(16) == 0
 }
 
-/**
- * color-scheme is the modern answer and the one a GNOME dark-mode toggle sets.
- * Older desktops only name the theme, where "-dark" is the convention.
- */
+/** color-scheme is what GNOME's dark toggle sets; older desktops only name the theme, "-dark" by convention. */
 private fun linuxPrefersDark(): Boolean {
     readCommand("gsettings", "get", "org.gnome.desktop.interface", "color-scheme")?.let {
         if (it.contains("prefer-dark")) return true
@@ -52,8 +46,8 @@ private fun linuxPrefersDark(): Boolean {
 /** Null on anything that goes wrong: a missing tool must not stop the app starting. */
 private fun readCommand(vararg command: String): String? = runCatching {
     val process = ProcessBuilder(*command).redirectErrorStream(true).start()
-    // Wait before reading: readText blocks until exit, which would make the timeout dead code.
-    // The output is a line or two, well under the pipe buffer, so the child cannot stall on a full pipe.
+    // waitFor before readText, which blocks until exit and would make the timeout dead code.
+    // The output is a line or two, so the child cannot stall on a full pipe.
     if (!process.waitFor(PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
         process.destroyForcibly()
         return null

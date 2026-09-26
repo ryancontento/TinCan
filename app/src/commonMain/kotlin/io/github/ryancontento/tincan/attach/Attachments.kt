@@ -39,7 +39,7 @@ fun classify(file: PickedFile): Attachment {
 /** Strict UTF-8, and no NUL bytes: binary files often decode "successfully" otherwise. */
 internal fun decodeText(bytes: ByteArray): String? {
     if (bytes.any { it == 0.toByte() }) return null
-    return runCatching { bytes.decodeToString(throwOnInvalidSequence = true) }.getOrNull()?.removePrefix("﻿")
+    return runCatching { bytes.decodeToString(throwOnInvalidSequence = true) }.getOrNull()?.removePrefix("\uFEFF")
 }
 
 /** A fence one backtick longer than any run inside the file, so a file holding ``` stays intact. */

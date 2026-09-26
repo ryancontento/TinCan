@@ -18,18 +18,13 @@ data class ConversationEntity(
     val systemPrompt: String?,
     val createdAt: Long,
     val updatedAt: Long,
-    /** Null uses the global setting, like the prompt did before it was snapshotted. */
+    /** Null uses the global setting; same for [numCtx]. */
     val temperature: Float? = null,
-    /** Null uses the global setting. */
     val numCtx: Int? = null,
-    /** Pinned conversations sit above the rest, whatever their age. */
     @ColumnInfo(defaultValue = "0") val pinned: Boolean = false,
 )
 
-/**
- * An image sent with a message. Stored in the database rather than beside it, so
- * secure_delete and conversation deletion cover it with no extra bookkeeping.
- */
+/** Stored in the database, not beside it, so secure_delete and cascade deletion cover it. */
 @Entity(
     tableName = "attachments",
     foreignKeys = [
@@ -51,11 +46,7 @@ class AttachmentEntity(
     val bytes: ByteArray,
 )
 
-/**
- * Model is recorded per message, not per conversation, so switching mid-thread
- * is lossless and the UI can mark where it changed. Same for [backendId], which
- * holds an opaque `ServerKey` rather than the address it was derived from.
- */
+/** Model and server key are per message, so switching mid-thread is lossless and visible. */
 @Entity(
     tableName = "messages",
     foreignKeys = [
@@ -89,7 +80,7 @@ enum class MessageRole { USER, ASSISTANT, SYSTEM }
 /** PENDING = composed while offline. INCOMPLETE = stream died partway. Both recoverable. */
 enum class MessageStatus { PENDING, STREAMING, COMPLETE, INCOMPLETE, FAILED }
 
-/** Explicit so stored values are pinned to constant names, not ordinals. */
+/** Stored by name, not ordinal; an unknown name falls back rather than failing the read. */
 class Converters {
     @TypeConverter fun roleToString(value: MessageRole): String = value.name
 
@@ -104,7 +95,6 @@ class Converters {
         MessageStatus.entries.firstOrNull { it.name == value } ?: MessageStatus.COMPLETE
 }
 
-/** One search result: the matching message plus the conversation it lives in. */
 data class SearchHit(
     val messageId: Long,
     val conversationId: Long,

@@ -31,6 +31,8 @@ koin = "4.0.4"
 markdown = "0.32.0"
 
 turbine = "1.2.0"
+# Matches the slf4j-api Ktor brings in.
+slf4j = "2.0.16"
 
 [libraries]
 android-gradle-plugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }
@@ -66,6 +68,7 @@ markdown-renderer = { module = "com.mikepenz:multiplatform-markdown-renderer", v
 markdown-renderer-m3 = { module = "com.mikepenz:multiplatform-markdown-renderer-m3", version.ref = "markdown" }
 
 turbine = { module = "app.cash.turbine:turbine", version.ref = "turbine" }
+slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
 
 [plugins]

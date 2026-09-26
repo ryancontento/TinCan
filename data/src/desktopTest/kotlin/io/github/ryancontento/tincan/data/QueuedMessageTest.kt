@@ -47,8 +47,7 @@ class QueuedMessageTest {
             repo.markPending(second)
             repo.markPending(first)
 
-            // Insertion order, not the order they were marked — otherwise a
-            // conversation would be replayed out of sequence.
+            // Insertion order, not marking order, or the conversation replays out of sequence.
             assertEquals("first", repo.oldestPendingMessage(id)?.content)
         }
     }
@@ -86,8 +85,7 @@ class QueuedMessageTest {
 
             assertNotNull(repo.resumableReply(id))
 
-            // Once the user says something else, the truncated reply is history;
-            // continuing it would rewrite text they have already read past.
+            // Once the user moves on, continuing it would rewrite text they have read past.
             repo.appendUserMessage(id, "never mind", TEST_SERVER)
             assertNull(repo.resumableReply(id))
         }

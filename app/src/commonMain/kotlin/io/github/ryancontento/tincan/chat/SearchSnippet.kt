@@ -3,13 +3,7 @@ package io.github.ryancontento.tincan.chat
 /** A window of message text around a match, with the match located inside it. */
 data class Snippet(val text: String, val matchStart: Int, val matchLength: Int)
 
-/**
- * Cuts [content] down to the text around the first match of [term].
- *
- * Newlines collapse to spaces so a hit is one line in the list however the
- * message was formatted, and the ellipses are part of the text so the caller
- * does not have to know whether either end was trimmed.
- */
+/** The text around the first match, on one line, with the ellipses already added. */
 fun snippetAround(content: String, term: String, radius: Int = DEFAULT_RADIUS): Snippet {
     val flat = content.replace(WHITESPACE, " ").trim()
     if (term.isBlank()) return Snippet(flat.take(radius * 2), 0, 0)

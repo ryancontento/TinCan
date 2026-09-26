@@ -16,8 +16,7 @@ class ContextWindowTest {
 
     @Test
     fun estimation_never_undershoots_a_plain_four_chars_per_token_rule() {
-        // Under-estimating is the dangerous direction: it lets the server
-        // truncate a conversation the client believed was safely within budget.
+        // Under-estimating is the dangerous direction: the server would truncate silently.
         val text = "The M1 Pro runs at 200GB/s of memory bandwidth."
         assertTrue(
             estimateTokens(text) >= text.length / 4,
@@ -54,8 +53,7 @@ class ContextWindowTest {
 
     @Test
     fun the_newest_message_is_kept_even_when_it_alone_blows_the_budget() {
-        // A truncated question is useless. Sending an over-long one at least
-        // lets the server answer it or say why it cannot.
+        // A truncated question is useless; an over-long one at least gets an answer or a reason.
         val plan = planContext(listOf(sized(5), sized(5000)), budgetTokens = 100, reserveForReplyTokens = 10)
 
         assertEquals(1, plan.messages.size)
@@ -100,8 +98,7 @@ class ContextWindowTest {
 
         assertEquals(messages.size, plan.messages.size)
         assertFalse(plan.trimmed)
-        // Null is the signal that the server is deciding and will truncate
-        // silently — the UI is expected to say so rather than show a fake bar.
+        // Null tells the UI the server decides, so it shows no fake usage bar.
         assertNull(plan.budgetTokens)
         assertNull(plan.fractionUsed)
     }

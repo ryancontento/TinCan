@@ -28,13 +28,7 @@ import io.github.ryancontento.tincan.ui.TinFormRow
 import io.github.ryancontento.tincan.ui.TinOutlinedButton
 import io.github.ryancontento.tincan.ui.TinToolbarButton
 
-/**
- * Everything that belongs to one conversation rather than to the app: its name,
- * the model it defaults to, and the system prompt it runs under.
- *
- * The prompt is a copy taken when the conversation was created, so editing the
- * global default never reaches back into threads already under way.
- */
+/** What belongs to one conversation rather than the app: name, model, prompt, temperature and context window. */
 @Composable
 fun ConversationSettingsDialog(
     conversation: ConversationEntity,

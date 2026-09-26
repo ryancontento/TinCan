@@ -14,12 +14,7 @@ import kotlinx.coroutines.launch
 
 enum class ConnectionState { UNKNOWN, CHECKING, ONLINE, OFFLINE }
 
-/**
- * Owns "is the server there", so the view model does not have to.
- *
- * While offline it re-probes on a timer, which is what lets a queued message
- * send itself once the machine wakes.
- */
+/** Owns "is the server there". While offline it re-probes on a timer, so a queued message sends itself when the machine wakes. */
 class ConnectionMonitor(
     private val scope: CoroutineScope,
     private val backends: LlmBackendProvider,

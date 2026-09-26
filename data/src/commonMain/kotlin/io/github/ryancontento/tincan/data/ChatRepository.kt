@@ -18,10 +18,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
-/**
- * Exposes Room entities directly — a parallel domain model would be ceremony at
- * this size. The database itself stays private, like DataStore and Ktor do.
- */
+/** Exposes Room entities directly (a domain mirror would be ceremony); the database stays private. */
 @OptIn(ExperimentalTime::class)
 class ChatRepository internal constructor(
     private val dao: ChatDao,
@@ -31,7 +28,7 @@ class ChatRepository internal constructor(
     private val closeDatabase: () -> Unit = {},
 ) : AutoCloseable {
 
-    /** Releases the underlying database file lock. Tests need it; the app does not. */
+    /** Releases the database file lock; only tests need it. */
     override fun close() = closeDatabase()
 
     fun observeConversations(): Flow<List<ConversationEntity>> = dao.observeConversations()
@@ -42,11 +39,7 @@ class ChatRepository internal constructor(
     /** Startup: rows left STREAMING belong to a dead process and will never finish. */
     suspend fun recoverInterruptedMessages() = dao.demoteOrphanedStreamingMessages()
 
-    /**
-     * Startup: replaces server addresses written by earlier versions with their
-     * keys, so no upgrade path leaves hostnames sitting in the transcript.
-     * Rows already holding a key are left alone, so this is cheap to re-run.
-     */
+    /** Startup: swaps raw addresses written by older versions for their keys. Idempotent. */
     suspend fun redactStoredServerAddresses(keyFor: suspend (String) -> ServerKey) {
         val addresses = dao.distinctBackendIds().filter { ServerKey.looksLikeAddress(it) }
         if (addresses.isEmpty()) return
@@ -116,20 +109,7 @@ class ChatRepository internal constructor(
         var id = 0L
         inTransaction {
             id = dao.insertMessage(
-                MessageEntity(
-                    conversationId = conversationId,
-                    role = MessageRole.USER,
-                    content = content,
-                    thinking = null,
-                    modelId = null,
-                    backendId = serverKey.value,
-                    status = MessageStatus.COMPLETE,
-                    errorCode = null,
-                    promptTokens = null,
-                    completionTokens = null,
-                    tokensPerSecond = null,
-                    createdAt = now(),
-                ),
+                newMessage(conversationId, MessageRole.USER, content, null, serverKey, MessageStatus.COMPLETE),
             )
             images.forEach {
                 dao.insertAttachment(
@@ -154,20 +134,7 @@ class ChatRepository internal constructor(
     /** Creates the row the streaming reply will be written into. */
     suspend fun beginAssistantMessage(conversationId: Long, modelId: String, serverKey: ServerKey): Long =
         dao.insertMessage(
-            MessageEntity(
-                conversationId = conversationId,
-                role = MessageRole.ASSISTANT,
-                content = "",
-                thinking = null,
-                modelId = modelId,
-                backendId = serverKey.value,
-                status = MessageStatus.STREAMING,
-                errorCode = null,
-                promptTokens = null,
-                completionTokens = null,
-                tokensPerSecond = null,
-                createdAt = now(),
-            ),
+            newMessage(conversationId, MessageRole.ASSISTANT, "", modelId, serverKey, MessageStatus.STREAMING),
         )
 
     suspend fun updateStreamingBody(messageId: Long, content: String, thinking: String?) =
@@ -196,17 +163,13 @@ class ChatRepository internal constructor(
     /** Drops an assistant row that produced nothing, so a failure leaves no empty bubble. */
     suspend fun discardMessage(messageId: Long) = dao.deleteMessage(messageId)
 
-    /** Puts a discarded reply back. It returns with a new id; nothing referenced the old one. */
+    /** Puts a discarded reply back under a new id; nothing referenced the old one. */
     suspend fun restoreMessage(message: MessageEntity): Long = dao.insertMessage(message.copy(id = 0))
 
-    /** Every message the conversation holds, oldest first. Used for export. */
+    /** Oldest first; used for export. */
     suspend fun messages(conversationId: Long): List<MessageEntity> = dao.messages(conversationId)
 
-    /**
-     * Rewinds the transcript to just before [messageId], which is what both
-     * regenerating a reply and editing a question need: the model must not see
-     * the turns it is about to replace.
-     */
+    /** Rewinds to just before [messageId], so a regenerate or edit hides the turns it replaces from the model. */
     suspend fun truncateFrom(conversationId: Long, messageId: Long) =
         dao.deleteMessagesFrom(conversationId, messageId)
 
@@ -230,8 +193,7 @@ class ChatRepository internal constructor(
 
     /** Only the final message; continuing an earlier one would rewrite read history. */
     suspend fun resumableReply(conversationId: Long): MessageEntity? =
-        dao.messages(conversationId).lastOrNull()
-            ?.takeIf { it.role == MessageRole.ASSISTANT && it.status == MessageStatus.INCOMPLETE }
+        lastAssistantMessage(conversationId)?.takeIf { it.status == MessageStatus.INCOMPLETE }
 
     /** Reopens a truncated reply so generation can append to the same row. */
     suspend fun resumeAssistantMessage(messageId: Long) =
@@ -246,6 +208,28 @@ class ChatRepository internal constructor(
             .map { ChatMessage(role = it.role.toDomain(), content = it.content, images = images[it.id].orEmpty()) }
     }
 
+    private fun newMessage(
+        conversationId: Long,
+        role: MessageRole,
+        content: String,
+        modelId: String?,
+        serverKey: ServerKey,
+        status: MessageStatus,
+    ) = MessageEntity(
+        conversationId = conversationId,
+        role = role,
+        content = content,
+        thinking = null,
+        modelId = modelId,
+        backendId = serverKey.value,
+        status = status,
+        errorCode = null,
+        promptTokens = null,
+        completionTokens = null,
+        tokensPerSecond = null,
+        createdAt = now(),
+    )
+
     private fun now(): Long = Clock.System.now().toEpochMilliseconds()
 
     companion object {
@@ -255,10 +239,7 @@ class ChatRepository internal constructor(
     }
 }
 
-/**
- * Neutralises LIKE's own wildcards, so searching for "50%" finds the text
- * rather than matching everything. Paired with `ESCAPE '\'` in the query.
- */
+/** Escapes LIKE's wildcards so "50%" matches literally; pairs with `ESCAPE '\'` in the query. */
 internal fun escapeForLike(term: String): String =
     term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
@@ -268,22 +249,21 @@ fun MessageRole.toDomain(): Role = when (this) {
     MessageRole.SYSTEM -> Role.SYSTEM
 }
 
+private const val CHECKPOINT_WAL = "PRAGMA wal_checkpoint(TRUNCATE)"
+
 /** Room stays out of the public API so consumers never get androidx.room on their classpath. */
 fun createChatRepository(directory: String = appDataDir()): ChatRepository {
     val database = createDatabase(directory)
     return ChatRepository(
         dao = database.chatDao(),
         rewriteFile = {
+            // VACUUM rebuilds the pages that held superseded rows; the checkpoint drops the log's old copies.
             database.useWriterConnection { connection ->
-                // Rebuilds every page, so superseded rows stop sitting in free space.
                 connection.execSQL("VACUUM")
-                // Then flush and truncate the log, which still holds the old copies.
-                connection.execSQL("PRAGMA wal_checkpoint(TRUNCATE)")
+                connection.execSQL(CHECKPOINT_WAL)
             }
         },
-        flushLog = {
-            database.useWriterConnection { it.execSQL("PRAGMA wal_checkpoint(TRUNCATE)") }
-        },
+        flushLog = { database.useWriterConnection { it.execSQL(CHECKPOINT_WAL) } },
         // DAO calls inside the block run on this connection, so they commit or roll back together.
         inTransaction = { block -> database.useWriterConnection { it.immediateTransaction { block() } } },
         closeDatabase = { database.close() },
