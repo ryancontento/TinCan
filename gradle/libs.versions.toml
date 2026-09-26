@@ -27,7 +27,7 @@ datastore = "1.1.4"
 lifecycle = "2.8.4"
 navigation = "2.8.0-alpha13"
 
-koin = "4.0.4"
+koin = "4.2.2"
 markdown = "0.32.0"
 
 turbine = "1.2.0"
