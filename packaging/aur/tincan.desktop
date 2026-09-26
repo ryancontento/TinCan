@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=TinCan
+Comment=Chat with your own local LLMs
+Exec=tincan
+Icon=tincan
+Terminal=false
+Categories=Utility;Development;
+StartupWMClass=io-github-ryancontento-tincan-MainKt

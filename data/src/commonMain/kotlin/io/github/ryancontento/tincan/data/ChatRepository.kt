@@ -1,7 +1,9 @@
 package io.github.ryancontento.tincan.data
 
 import androidx.room.execSQL
+import androidx.room.immediateTransaction
 import androidx.room.useWriterConnection
+import io.github.ryancontento.tincan.data.db.AttachmentEntity
 import io.github.ryancontento.tincan.data.db.ChatDao
 import io.github.ryancontento.tincan.data.db.ConversationEntity
 import io.github.ryancontento.tincan.data.db.MessageEntity
@@ -25,6 +27,7 @@ class ChatRepository internal constructor(
     private val dao: ChatDao,
     private val rewriteFile: suspend () -> Unit = {},
     private val flushLog: suspend () -> Unit = {},
+    private val inTransaction: suspend (suspend () -> Unit) -> Unit = { it() },
     private val closeDatabase: () -> Unit = {},
 ) : AutoCloseable {
 
@@ -103,23 +106,50 @@ class ChatRepository internal constructor(
         dao.renameConversation(conversationId, title, now())
     }
 
-    suspend fun appendUserMessage(conversationId: Long, content: String, serverKey: ServerKey): Long =
-        dao.insertMessage(
-            MessageEntity(
-                conversationId = conversationId,
-                role = MessageRole.USER,
-                content = content,
-                thinking = null,
-                modelId = null,
-                backendId = serverKey.value,
-                status = MessageStatus.COMPLETE,
-                errorCode = null,
-                promptTokens = null,
-                completionTokens = null,
-                tokensPerSecond = null,
-                createdAt = now(),
-            ),
-        )
+    /** One transaction, so a crash cannot leave a question on disk without the image it asked about. */
+    suspend fun appendUserMessage(
+        conversationId: Long,
+        content: String,
+        serverKey: ServerKey,
+        images: List<ImageAttachment> = emptyList(),
+    ): Long {
+        var id = 0L
+        inTransaction {
+            id = dao.insertMessage(
+                MessageEntity(
+                    conversationId = conversationId,
+                    role = MessageRole.USER,
+                    content = content,
+                    thinking = null,
+                    modelId = null,
+                    backendId = serverKey.value,
+                    status = MessageStatus.COMPLETE,
+                    errorCode = null,
+                    promptTokens = null,
+                    completionTokens = null,
+                    tokensPerSecond = null,
+                    createdAt = now(),
+                ),
+            )
+            images.forEach {
+                dao.insertAttachment(
+                    AttachmentEntity(messageId = id, conversationId = conversationId, mimeType = it.mimeType, bytes = it.bytes),
+                )
+            }
+        }
+        return id
+    }
+
+    fun observeAttachments(conversationId: Long): Flow<List<AttachmentEntity>> =
+        dao.observeAttachments(conversationId)
+
+    suspend fun attachments(conversationId: Long): List<AttachmentEntity> = dao.attachments(conversationId)
+
+    suspend fun setPinned(conversationId: Long, pinned: Boolean) = dao.setPinned(conversationId, pinned)
+
+    /** Null for either hands it back to the global setting. */
+    suspend fun setGenerationOptions(conversationId: Long, temperature: Float?, numCtx: Int?) =
+        dao.setGenerationOptions(conversationId, temperature, numCtx, now())
 
     /** Creates the row the streaming reply will be written into. */
     suspend fun beginAssistantMessage(conversationId: Long, modelId: String, serverKey: ServerKey): Long =
@@ -208,10 +238,13 @@ class ChatRepository internal constructor(
         dao.setMessageStatus(messageId, MessageStatus.STREAMING)
 
     /** Failed turns are excluded so errors do not poison the context. */
-    suspend fun historyFor(conversationId: Long): List<ChatMessage> =
-        dao.messages(conversationId)
-            .filter { it.status != MessageStatus.FAILED && it.content.isNotBlank() }
-            .map { ChatMessage(role = it.role.toDomain(), content = it.content) }
+    suspend fun historyFor(conversationId: Long): List<ChatMessage> {
+        val images = dao.attachments(conversationId).groupBy({ it.messageId }, { it.bytes })
+        return dao.messages(conversationId)
+            // An image with no words is still a question.
+            .filter { it.status != MessageStatus.FAILED && (it.content.isNotBlank() || it.id in images) }
+            .map { ChatMessage(role = it.role.toDomain(), content = it.content, images = images[it.id].orEmpty()) }
+    }
 
     private fun now(): Long = Clock.System.now().toEpochMilliseconds()
 
@@ -251,6 +284,8 @@ fun createChatRepository(directory: String = appDataDir()): ChatRepository {
         flushLog = {
             database.useWriterConnection { it.execSQL("PRAGMA wal_checkpoint(TRUNCATE)") }
         },
+        // DAO calls inside the block run on this connection, so they commit or roll back together.
+        inTransaction = { block -> database.useWriterConnection { it.immediateTransaction { block() } } },
         closeDatabase = { database.close() },
     )
 }

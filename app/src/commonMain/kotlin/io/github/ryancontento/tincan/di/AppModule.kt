@@ -6,6 +6,7 @@ import io.github.ryancontento.tincan.data.createChatRepository
 import io.github.ryancontento.tincan.data.createSettingsRepository
 import io.github.ryancontento.tincan.llm.LlmBackendProvider
 import io.github.ryancontento.tincan.llm.ollama.OllamaBackendFactory
+import io.github.ryancontento.tincan.models.ModelsViewModel
 import io.github.ryancontento.tincan.settings.SettingsViewModel
 import org.koin.core.module.Module
 import org.koin.core.module.dsl.viewModel
@@ -31,4 +32,5 @@ fun appModule(dataDirectory: String? = null): Module = module {
     // parameter and ignores default values, which crashed startup once.
     viewModel { ChatViewModel(get(), get(), get()) }
     viewModel { SettingsViewModel(get(), get()) }
+    viewModel { ModelsViewModel(get(), get()) }
 }

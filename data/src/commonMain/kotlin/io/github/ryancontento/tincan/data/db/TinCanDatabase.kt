@@ -1,5 +1,6 @@
 package io.github.ryancontento.tincan.data.db
 
+import androidx.room.AutoMigration
 import androidx.room.ConstructedBy
 import androidx.room.Database
 import androidx.room.RoomDatabase
@@ -12,10 +13,12 @@ import androidx.sqlite.execSQL
 import io.github.ryancontento.tincan.data.appDataDir
 import kotlinx.coroutines.Dispatchers
 
+// v2: per-conversation temperature and num_ctx, pinning, image attachments. Additive, so automatic.
 @Database(
-    entities = [ConversationEntity::class, MessageEntity::class],
-    version = 1,
+    entities = [ConversationEntity::class, MessageEntity::class, AttachmentEntity::class],
+    version = 2,
     exportSchema = true,
+    autoMigrations = [AutoMigration(from = 1, to = 2)],
 )
 @TypeConverters(Converters::class)
 @ConstructedBy(TinCanDatabaseConstructor::class)

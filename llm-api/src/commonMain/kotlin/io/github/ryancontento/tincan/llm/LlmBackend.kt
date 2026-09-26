@@ -24,6 +24,36 @@ interface LlmBackend {
      * persisted. Cancelling leaves a clean partial message.
      */
     fun chat(request: ChatRequest): Flow<ChatEvent>
+
+    // Model management. Defaults so a backend without it still satisfies the seam.
+
+    /** Models currently in memory, and how much of each sits on the GPU. */
+    suspend fun loadedModels(): Result<List<LoadedModel>> = Result.failure(UnsupportedOperationException())
+
+    /** Frees the memory now rather than when keep_alive runs out. */
+    suspend fun unloadModel(model: String): Result<Unit> = Result.failure(UnsupportedOperationException())
+
+    /** Like [chat], always completes normally; failure is a terminal [PullEvent.Failed]. */
+    fun pullModel(model: String): Flow<PullEvent> =
+        kotlinx.coroutines.flow.flowOf(PullEvent.Failed(LlmError.Rejected("This server cannot pull models.")))
+
+    suspend fun deleteModel(model: String): Result<Unit> = Result.failure(UnsupportedOperationException())
+}
+
+sealed interface PullEvent {
+    /** One step. Download steps carry byte counts; the rest ("verifying", "writing manifest") do not. */
+    data class Progress(val status: String, val completedBytes: Long?, val totalBytes: Long?) : PullEvent {
+        val fraction: Float?
+            get() {
+                val total = totalBytes ?: return null
+                val done = completedBytes ?: return null
+                return if (total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else null
+            }
+    }
+
+    data object Done : PullEvent
+
+    data class Failed(val error: LlmError) : PullEvent
 }
 
 sealed interface ChatEvent {
@@ -57,6 +87,9 @@ sealed interface LlmError {
     data object StreamInterrupted : LlmError
 
     data class Server(val code: Int, val body: String?) : LlmError
+
+    /** The server answered with a reason it will not do this, e.g. no such model in the library. */
+    data class Rejected(val message: String) : LlmError
 
     data class Unknown(val cause: Throwable) : LlmError
 }

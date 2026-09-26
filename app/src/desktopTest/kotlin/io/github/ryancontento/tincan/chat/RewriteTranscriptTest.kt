@@ -1,5 +1,6 @@
 package io.github.ryancontento.tincan.chat
 
+import io.github.ryancontento.tincan.attach.PickedFile
 import io.github.ryancontento.tincan.data.ChatRepository
 import io.github.ryancontento.tincan.data.SettingsRepository
 import io.github.ryancontento.tincan.data.createChatRepository
@@ -37,6 +38,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
+private val PNG = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3)
+
 /**
  * Records what each request actually carried, which is the only way to tell a
  * regenerate from a continuation or to see which system prompt was sent.
@@ -58,8 +61,10 @@ internal class RecordingBackend : LlmBackendProvider, LlmBackend {
     override suspend fun probe(): BackendHealth =
         if (reachable) BackendHealth.Available(1) else BackendHealth.Unavailable(LlmError.Unreachable)
 
-    override suspend fun listModels(): Result<List<ModelInfo>> =
-        Result.success(listOf(ModelInfo("phi4"), ModelInfo("qwen3:8b")))
+    @Volatile
+    var models = listOf(ModelInfo("phi4"), ModelInfo("qwen3:8b"))
+
+    override suspend fun listModels(): Result<List<ModelInfo>> = Result.success(models)
 
     override fun chat(request: ChatRequest): Flow<ChatEvent> = flow {
         synchronized(requests) { requests += request }
@@ -280,6 +285,133 @@ class RewriteTranscriptTest {
         vm.openSearchHit(hit)
         val opened = vm.await { it.activeConversationId == hit.conversationId }
         assertEquals(hit.messageId, opened.scrollToMessageId)
+    }
+
+    @Test
+    fun a_conversations_own_temperature_and_context_reach_the_request() = runBlocking {
+        val backend = RecordingBackend()
+        settings.setTemperature(0.9f)
+        settings.setNumCtx(4096)
+        val vm = viewModel(backend)
+        vm.await { it.connection == ConnectionState.ONLINE }
+
+        vm.send("first question")
+        val state = vm.await { it.messages.size == 2 && !it.isGenerating }
+        assertEquals(0.9f, backend.lastRequest().options.temperature)
+
+        vm.setConversationOptions(state.activeConversationId!!, temperature = "0.2", numCtx = "").join()
+        vm.send("second question")
+        vm.await { it.messages.size == 4 && !it.isGenerating }
+
+        assertEquals(0.2f, backend.lastRequest().options.temperature)
+        assertEquals(4096, backend.lastRequest().options.numCtx, "blank follows the global setting")
+    }
+
+    @Test
+    fun pinning_moves_a_conversation_to_the_top_without_touching_its_date() = runBlocking {
+        val backend = RecordingBackend()
+        val vm = viewModel(backend)
+        vm.await { it.connection == ConnectionState.ONLINE }
+
+        vm.send("older")
+        val first = vm.await { it.messages.size == 2 && !it.isGenerating }
+        vm.newConversation()
+        vm.send("newer")
+        vm.await { it.conversations.size == 2 && !it.isGenerating }
+
+        val olderId = first.activeConversationId!!
+        val before = chat.conversation(olderId)!!.updatedAt
+        vm.setPinned(olderId, true).join()
+        val pinned = vm.await { it.conversations.firstOrNull()?.id == olderId }
+
+        assertTrue(pinned.conversations.first().pinned)
+        assertEquals(before, chat.conversation(olderId)!!.updatedAt)
+    }
+
+    @Test
+    fun an_attached_image_travels_with_the_question_and_stays_in_the_history() = runBlocking {
+        val backend = RecordingBackend()
+        val vm = viewModel(backend)
+        vm.await { it.connection == ConnectionState.ONLINE }
+
+        assertTrue(vm.attach(listOf(PickedFile("cat.png", PNG))).isEmpty(), "an image is not text to insert")
+        assertEquals(1, vm.state.value.draftImages.size)
+
+        assertTrue(vm.send(""), "an image alone is a question")
+        vm.await { it.messages.size == 2 && !it.isGenerating }
+        assertTrue(vm.state.value.draftImages.isEmpty())
+        assertEquals(1, backend.lastRequest().messages.single().images.size)
+
+        // Ollama keeps no state, so the image has to ride along with every later turn.
+        vm.send("and what colour is it?")
+        vm.await { it.messages.size == 4 && !it.isGenerating }
+        assertEquals(listOf(1, 0, 0), backend.lastRequest().messages.map { it.images.size })
+    }
+
+    @Test
+    fun a_model_that_cannot_see_keeps_the_draft_and_explains() = runBlocking {
+        val backend = RecordingBackend().apply { models = listOf(ModelInfo("phi4", capabilities = setOf("completion"))) }
+        val vm = viewModel(backend)
+        vm.await { it.connection == ConnectionState.ONLINE && it.availableModels.isNotEmpty() }
+
+        vm.attach(listOf(PickedFile("cat.png", PNG)))
+        assertEquals(false, vm.send("what is this?"))
+
+        assertEquals(1, vm.state.value.draftImages.size, "nothing is thrown away")
+        assertTrue(vm.state.value.notice!!.text.contains("can't read images"))
+        assertTrue(backend.requests.isEmpty())
+    }
+
+    @Test
+    fun editing_a_question_keeps_its_image() = runBlocking {
+        val backend = RecordingBackend()
+        val vm = viewModel(backend)
+        vm.await { it.connection == ConnectionState.ONLINE }
+
+        vm.attach(listOf(PickedFile("cat.png", PNG)))
+        vm.send("wat is this")
+        val sent = vm.await { it.messages.size == 2 && !it.isGenerating && it.attachments.isNotEmpty() }
+
+        vm.editAndResend(sent.messages.first().id, "what is this")
+        vm.await { !it.isGenerating && it.messages.firstOrNull()?.content == "what is this" && it.messages.size == 2 }
+
+        assertEquals(1, backend.lastRequest().messages.single().images.size)
+    }
+
+    @Test
+    fun a_text_file_comes_back_as_a_block_for_the_composer() = runBlocking {
+        val vm = viewModel(RecordingBackend())
+        val blocks = vm.attach(listOf(PickedFile("notes.txt", "remember the milk".encodeToByteArray())))
+
+        assertEquals(listOf("`notes.txt`\n```\nremember the milk\n```"), blocks)
+        assertTrue(vm.state.value.draftImages.isEmpty())
+    }
+
+    @Test
+    fun an_export_marks_images_in_markdown_and_carries_them_in_json() = runBlocking {
+        val backend = RecordingBackend()
+        val vm = viewModel(backend)
+        vm.await { it.connection == ConnectionState.ONLINE }
+
+        vm.attach(listOf(PickedFile("cat.png", PNG)))
+        vm.send("what is this?")
+        vm.await { it.messages.size == 2 && !it.isGenerating }
+
+        assertTrue(vm.buildExport(ExportFormat.MARKDOWN)!!.content.contains("_(1 image attached)_"))
+        assertTrue(vm.buildExport(ExportFormat.JSON)!!.content.contains("\"mimeType\": \"image/png\""))
+    }
+
+    @Test
+    fun switching_to_a_saved_server_changes_where_requests_go() = runBlocking {
+        val backend = RecordingBackend()
+        settings.saveServer("MacBook", "http://macbook:11434")
+        val vm = viewModel(backend)
+        vm.await { it.connection == ConnectionState.ONLINE }
+
+        vm.selectServer("http://macbook:11434")
+        val switched = vm.await { it.settings.serverUrl == "http://macbook:11434" }
+
+        assertEquals("MacBook", switched.settings.activeServerName)
     }
 
     @Test

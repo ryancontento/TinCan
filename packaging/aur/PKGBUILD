@@ -1,0 +1,38 @@
+# Maintainer: Ryan Contento
+#
+# Untested until a release carries the Linux tarball and an Arch machine builds this.
+# After tagging a release: bump pkgver, run `updpkgsums`, then `makepkg -si` to try it.
+pkgname=tincan-bin
+pkgver=1.1.0
+pkgrel=1
+pkgdesc="A chat client for local LLMs served by Ollama"
+arch=('x86_64')
+url="https://github.com/ryancontento/TinCan"
+license=('MIT')
+# jpackage bundles its own Java runtime; these are what AWT and Skia load from the system.
+depends=('fontconfig' 'freetype2' 'libx11' 'libxext' 'libxi' 'libxrender' 'libxtst')
+provides=('tincan')
+conflicts=('tincan')
+options=('!strip')
+source=(
+    "tincan-${pkgver}-linux-x64.tar.gz::${url}/releases/download/v${pkgver}/tincan-${pkgver}-linux-x64.tar.gz"
+    "tincan.png::https://raw.githubusercontent.com/ryancontento/TinCan/v${pkgver}/app/icons/png/tincan-256.png"
+    "LICENSE::https://raw.githubusercontent.com/ryancontento/TinCan/v${pkgver}/LICENSE"
+    "tincan.desktop"
+)
+sha256sums=('SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP')
+
+package() {
+    install -d "${pkgdir}/opt"
+    cp -a "${srcdir}/TinCan" "${pkgdir}/opt/tincan"
+
+    install -d "${pkgdir}/usr/bin"
+    ln -s /opt/tincan/bin/TinCan "${pkgdir}/usr/bin/tincan"
+
+    install -Dm644 "${srcdir}/tincan.desktop" "${pkgdir}/usr/share/applications/tincan.desktop"
+    install -Dm644 "${srcdir}/tincan.png" "${pkgdir}/usr/share/icons/hicolor/256x256/apps/tincan.png"
+    install -Dm644 "${srcdir}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}

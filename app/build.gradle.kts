@@ -18,6 +18,7 @@ kotlin {
             implementation(compose.material3)
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)
+            implementation(libs.kotlinx.datetime)
             implementation(libs.androidx.lifecycle.viewmodel)
             implementation(libs.androidx.lifecycle.viewmodel.compose)
             implementation(libs.navigation.compose)
@@ -42,6 +43,12 @@ kotlin {
             implementation(compose.desktop.currentOs)
             implementation(libs.kotlinx.coroutines.swing)
         }
+        val desktopTest by getting
+        desktopTest.dependencies {
+            // Renders offscreen, so it runs on a headless CI runner.
+            @OptIn(org.jetbrains.compose.ExperimentalComposeLibrary::class)
+            implementation(compose.uiTest)
+        }
     }
 }
 
@@ -54,7 +61,7 @@ compose.desktop {
             // in CI is the whole promotion.
             targetFormats(TargetFormat.Msi, TargetFormat.Deb, TargetFormat.Rpm)
             packageName = "TinCan"
-            packageVersion = "1.0.0"
+            packageVersion = "1.1.0"
             description = "A chat client for local LLMs"
             vendor = "Ryan Contento"
 

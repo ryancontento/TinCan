@@ -3,6 +3,7 @@ package io.github.ryancontento.tincan.data
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
@@ -33,6 +34,9 @@ private object Keys {
     val serverKeySalt = stringPreferencesKey("server_key_salt")
     val theme = stringPreferencesKey("theme")
     val sidebarWidth = intPreferencesKey("sidebar_width")
+    val sendKey = stringPreferencesKey("send_key")
+    val closeToTray = booleanPreferencesKey("close_to_tray")
+    val savedServers = stringPreferencesKey("saved_servers")
 }
 
 /** Absent keys fall back to defaults rather than being written eagerly, so
@@ -59,6 +63,7 @@ class SettingsRepository internal constructor(
     val settings: Flow<TinCanSettings> = store.data.map { prefs ->
         TinCanSettings(
             serverUrl = prefs[Keys.serverUrl] ?: TinCanSettings.DEFAULT_SERVER_URL,
+            savedServers = decodeServers(prefs[Keys.savedServers]),
             selectedModel = prefs[Keys.selectedModel],
             systemPrompt = prefs[Keys.systemPrompt].orEmpty(),
             temperature = prefs[Keys.temperature],
@@ -67,6 +72,8 @@ class SettingsRepository internal constructor(
             modelLoadingThresholdMillis = prefs[Keys.loadingThreshold]
                 ?: TinCanSettings.DEFAULT_LOADING_THRESHOLD_MILLIS,
             theme = themeFrom(prefs[Keys.theme]),
+            sendKey = sendKeyFrom(prefs[Keys.sendKey]),
+            closeToTray = prefs[Keys.closeToTray] ?: false,
             sidebarWidth = prefs[Keys.sidebarWidth] ?: TinCanSettings.DEFAULT_SIDEBAR_WIDTH,
             window = WindowGeometry(
                 width = prefs[Keys.windowWidth],
@@ -78,6 +85,14 @@ class SettingsRepository internal constructor(
     }
 
     suspend fun setServerUrl(value: String) = edit { it[Keys.serverUrl] = value.trim() }
+
+    suspend fun saveServer(name: String, url: String) = edit { prefs ->
+        prefs[Keys.savedServers] = encodeServers(decodeServers(prefs[Keys.savedServers]).withServer(name, url))
+    }
+
+    suspend fun removeServer(url: String) = edit { prefs ->
+        prefs[Keys.savedServers] = encodeServers(decodeServers(prefs[Keys.savedServers]).withoutServer(url))
+    }
 
     suspend fun setSelectedModel(value: String?) = edit { prefs ->
         if (value == null) prefs.remove(Keys.selectedModel) else prefs[Keys.selectedModel] = value
@@ -100,6 +115,10 @@ class SettingsRepository internal constructor(
     }
 
     suspend fun setTheme(value: ThemePreference) = edit { it[Keys.theme] = value.name }
+
+    suspend fun setSendKey(value: SendKey) = edit { it[Keys.sendKey] = value.name }
+
+    suspend fun setCloseToTray(value: Boolean) = edit { it[Keys.closeToTray] = value }
 
     /** Clamped here as well as in the drag handle, so a stored value cannot hide the rail. */
     suspend fun setSidebarWidth(dp: Int) = edit {

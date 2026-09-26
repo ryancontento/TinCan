@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -39,7 +40,9 @@ fun ConversationSettingsDialog(
     conversation: ConversationEntity,
     models: List<String>,
     globalSystemPrompt: String,
-    onSave: (title: String, systemPrompt: String) -> Unit,
+    globalTemperature: Float?,
+    globalNumCtx: Int?,
+    onSave: (title: String, systemPrompt: String, temperature: String, numCtx: String) -> Unit,
     onSelectModel: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -47,6 +50,8 @@ fun ConversationSettingsDialog(
     var prompt by remember(conversation.id) {
         mutableStateOf(conversation.systemPrompt ?: globalSystemPrompt)
     }
+    var temperature by remember(conversation.id) { mutableStateOf(conversation.temperature?.toString().orEmpty()) }
+    var numCtx by remember(conversation.id) { mutableStateOf(conversation.numCtx?.toString().orEmpty()) }
     var modelMenuOpen by remember { mutableStateOf(false) }
 
     AlertDialog(
@@ -106,9 +111,33 @@ fun ConversationSettingsDialog(
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     TinToolbarButton(onClick = { prompt = globalSystemPrompt }, label = "Use the default prompt")
                 }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    TinFormRow(label = "Temperature", hint = "Blank follows Settings.") {
+                        TinField(
+                            value = temperature,
+                            onValueChange = { temperature = it },
+                            // Shows what blank means, rather than leaving it to guesswork.
+                            placeholder = globalTemperature?.toString() ?: "model default",
+                            textStyle = MaterialTheme.typography.bodyMedium.merge(MonoStyle),
+                            modifier = Modifier.widthIn(max = 140.dp),
+                        )
+                    }
+                    TinFormRow(label = "Context window", hint = "Blank follows Settings.") {
+                        TinField(
+                            value = numCtx,
+                            onValueChange = { numCtx = it },
+                            placeholder = globalNumCtx?.toString() ?: "server decides",
+                            textStyle = MaterialTheme.typography.bodyMedium.merge(MonoStyle),
+                            modifier = Modifier.widthIn(max = 140.dp),
+                        )
+                    }
+                }
             }
         },
-        confirmButton = { TinButton(onClick = { onSave(title, prompt); onDismiss() }, label = "Save") },
+        confirmButton = {
+            TinButton(onClick = { onSave(title, prompt, temperature, numCtx); onDismiss() }, label = "Save")
+        },
         dismissButton = { TinToolbarButton(onClick = onDismiss, label = "Cancel") },
     )
 }

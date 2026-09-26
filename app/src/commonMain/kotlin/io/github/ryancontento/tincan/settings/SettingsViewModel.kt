@@ -3,6 +3,7 @@ package io.github.ryancontento.tincan.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.ryancontento.tincan.chat.describe
+import io.github.ryancontento.tincan.data.SendKey
 import io.github.ryancontento.tincan.data.SettingsRepository
 import io.github.ryancontento.tincan.data.ThemePreference
 import io.github.ryancontento.tincan.data.TinCanSettings
@@ -41,9 +42,18 @@ class SettingsViewModel(
     }
 
     fun setServerUrl(value: String) = viewModelScope.launch { repository.setServerUrl(value) }
+
+    /** Saves the address currently in the field under [name]. */
+    fun saveCurrentServer(name: String) = viewModelScope.launch {
+        repository.saveServer(name, _state.value.settings.serverUrl)
+    }
+
+    fun removeServer(url: String) = viewModelScope.launch { repository.removeServer(url) }
     fun setSystemPrompt(value: String) = viewModelScope.launch { repository.setSystemPrompt(value) }
     fun setKeepAlive(value: String) = viewModelScope.launch { repository.setKeepAlive(value) }
     fun setTheme(value: ThemePreference) = viewModelScope.launch { repository.setTheme(value) }
+    fun setSendKey(value: SendKey) = viewModelScope.launch { repository.setSendKey(value) }
+    fun setCloseToTray(value: Boolean) = viewModelScope.launch { repository.setCloseToTray(value) }
 
     /** Blank clears the override and lets the server pick. */
     fun setNumCtx(raw: String) = viewModelScope.launch {

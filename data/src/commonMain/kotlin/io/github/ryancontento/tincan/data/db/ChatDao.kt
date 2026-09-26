@@ -9,8 +9,24 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface ChatDao {
 
-    @Query("SELECT * FROM conversations ORDER BY updatedAt DESC")
+    @Query("SELECT * FROM conversations ORDER BY pinned DESC, updatedAt DESC")
     fun observeConversations(): Flow<List<ConversationEntity>>
+
+    /** Not activity, so updatedAt is left alone and the conversation keeps its place in time. */
+    @Query("UPDATE conversations SET pinned = :pinned WHERE id = :id")
+    suspend fun setPinned(id: Long, pinned: Boolean)
+
+    @Query("UPDATE conversations SET temperature = :temperature, numCtx = :numCtx, updatedAt = :at WHERE id = :id")
+    suspend fun setGenerationOptions(id: Long, temperature: Float?, numCtx: Int?, at: Long)
+
+    @Insert
+    suspend fun insertAttachment(attachment: AttachmentEntity): Long
+
+    @Query("SELECT * FROM attachments WHERE conversationId = :conversationId ORDER BY id ASC")
+    suspend fun attachments(conversationId: Long): List<AttachmentEntity>
+
+    @Query("SELECT * FROM attachments WHERE conversationId = :conversationId ORDER BY id ASC")
+    fun observeAttachments(conversationId: Long): Flow<List<AttachmentEntity>>
 
     @Query("SELECT * FROM conversations WHERE id = :id")
     suspend fun conversation(id: Long): ConversationEntity?

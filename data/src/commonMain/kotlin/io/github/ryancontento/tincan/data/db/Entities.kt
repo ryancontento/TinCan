@@ -1,5 +1,6 @@
 package io.github.ryancontento.tincan.data.db
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -17,6 +18,37 @@ data class ConversationEntity(
     val systemPrompt: String?,
     val createdAt: Long,
     val updatedAt: Long,
+    /** Null uses the global setting, like the prompt did before it was snapshotted. */
+    val temperature: Float? = null,
+    /** Null uses the global setting. */
+    val numCtx: Int? = null,
+    /** Pinned conversations sit above the rest, whatever their age. */
+    @ColumnInfo(defaultValue = "0") val pinned: Boolean = false,
+)
+
+/**
+ * An image sent with a message. Stored in the database rather than beside it, so
+ * secure_delete and conversation deletion cover it with no extra bookkeeping.
+ */
+@Entity(
+    tableName = "attachments",
+    foreignKeys = [
+        ForeignKey(
+            entity = MessageEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["messageId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index(value = ["messageId"]), Index(value = ["conversationId"])],
+)
+class AttachmentEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val messageId: Long,
+    /** Copied from the message so watching a thread's images never touches the busy messages table. */
+    val conversationId: Long,
+    val mimeType: String,
+    val bytes: ByteArray,
 )
 
 /**

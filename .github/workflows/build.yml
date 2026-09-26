@@ -69,6 +69,16 @@ jobs:
           echo "Building $declared."
 
       - run: ./gradlew :app:packageDistributionForCurrentOS --stacktrace
+
+      # DEB and RPM miss Arch and most others; the app-image runs anywhere with glibc.
+      - name: Tarball the Linux app-image
+        if: runner.os == 'Linux'
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p app/build/compose/binaries/main/tarball
+          tar -C app/build/compose/binaries/main/app -czf \
+            "app/build/compose/binaries/main/tarball/tincan-${version}-linux-x64.tar.gz" TinCan
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ matrix.artifact }}
@@ -94,13 +104,15 @@ jobs:
       - name: Collect the installers
         run: |
           mkdir -p release
-          find artifacts -type f \( -name '*.msi' -o -name '*.deb' -o -name '*.rpm' \) \
+          find artifacts -type f \( -name '*.msi' -o -name '*.deb' -o -name '*.rpm' -o -name '*.tar.gz' \) \
             -exec cp {} release/ \;
-          ls -l release
           if [ -z "$(ls -A release)" ]; then
             echo "::error::No installers found in the packaging artifacts"
             exit 1
           fi
+          # Lets a downloader, and the AUR package, check what they got.
+          (cd release && sha256sum * > SHA256SUMS)
+          ls -l release
 
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
@@ -108,6 +120,6 @@ jobs:
           fail_on_unmatched_files: true
           generate_release_notes: true
           # Draft while the installers have never been produced by this pipeline
-          # before. Review the three files, then press Publish. Drop this line
-          # once a release has come out of here cleanly.
+          # before. Review the files, then press Publish. Drop this line once a
+          # release has come out of here cleanly.
           draft: true

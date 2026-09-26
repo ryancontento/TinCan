@@ -1,10 +1,12 @@
 package io.github.ryancontento.tincan.di
 
+import io.github.ryancontento.tincan.attach.FilePicker
 import io.github.ryancontento.tincan.chat.ChatViewModel
 import io.github.ryancontento.tincan.data.ChatRepository
 import io.github.ryancontento.tincan.data.SettingsRepository
 import io.github.ryancontento.tincan.export.FileSaver
 import io.github.ryancontento.tincan.llm.LlmBackendProvider
+import io.github.ryancontento.tincan.models.ModelsViewModel
 import io.github.ryancontento.tincan.settings.SettingsViewModel
 import io.github.ryancontento.tincan.stop
 import kotlinx.coroutines.Dispatchers
@@ -62,15 +64,18 @@ class AppModuleTest {
         // Bound only by the platform module, so a missing actual fails here
         // rather than the first time someone clicks Export.
         assertNotNull(koin.get<FileSaver>())
+        assertNotNull(koin.get<FilePicker>())
 
         // The two that broke. Resolving them is the whole point of this test.
         val chatViewModel = assertNotNull(koin.get<ChatViewModel>())
         val settingsViewModel = assertNotNull(koin.get<SettingsViewModel>())
+        val modelsViewModel = assertNotNull(koin.get<ModelsViewModel>())
 
         // Resolving a view model starts its collectors, and tearDown is about to
         // take Dispatchers.Main away from them.
         chatViewModel.stop()
         settingsViewModel.stop()
+        modelsViewModel.stop()
     }
 
     @Test

@@ -1,5 +1,6 @@
 package io.github.ryancontento.tincan.chat
 
+import io.github.ryancontento.tincan.data.SendKey
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -9,6 +10,7 @@ private fun enter(
     shift: Boolean = false,
     meta: Boolean = false,
     alt: Boolean = false,
+    sendKey: SendKey = SendKey.ENTER,
 ) = composerAction(
     isEnter = true,
     isKeyDown = down,
@@ -16,6 +18,7 @@ private fun enter(
     isShiftPressed = shift,
     isMetaPressed = meta,
     isAltPressed = alt,
+    sendKey = sendKey,
 )
 
 class ComposerKeysTest {
@@ -67,6 +70,26 @@ class ComposerKeysTest {
                 isMetaPressed = false,
             ),
         )
+    }
+
+    @Test
+    fun the_ctrl_enter_setting_swaps_which_enter_sends() {
+        assertEquals(ComposerAction.NEWLINE, enter(sendKey = SendKey.CTRL_ENTER))
+        assertEquals(ComposerAction.SEND, enter(ctrl = true, sendKey = SendKey.CTRL_ENTER))
+        assertEquals(ComposerAction.SEND, enter(meta = true, sendKey = SendKey.CTRL_ENTER))
+    }
+
+    @Test
+    fun shift_enter_breaks_the_line_in_either_mode() {
+        assertEquals(ComposerAction.NEWLINE, enter(shift = true, sendKey = SendKey.CTRL_ENTER))
+        // Ctrl+Shift+Enter is not a send even when Ctrl+Enter is.
+        assertEquals(ComposerAction.NEWLINE, enter(ctrl = true, shift = true, sendKey = SendKey.CTRL_ENTER))
+    }
+
+    @Test
+    fun key_up_and_alt_are_ignored_in_the_ctrl_enter_mode_too() {
+        assertEquals(ComposerAction.IGNORE, enter(down = false, ctrl = true, sendKey = SendKey.CTRL_ENTER))
+        assertEquals(ComposerAction.IGNORE, enter(alt = true, ctrl = true, sendKey = SendKey.CTRL_ENTER))
     }
 
     @Test

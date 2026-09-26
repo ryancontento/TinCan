@@ -7,13 +7,18 @@ import io.github.ryancontento.tincan.llm.ChatRequest
 import io.github.ryancontento.tincan.llm.GenerationStats
 import io.github.ryancontento.tincan.llm.LlmBackend
 import io.github.ryancontento.tincan.llm.LlmError
+import io.github.ryancontento.tincan.llm.LoadedModel
 import io.github.ryancontento.tincan.llm.ModelInfo
+import io.github.ryancontento.tincan.llm.PullEvent
 import io.github.ryancontento.tincan.llm.Role
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
+import io.ktor.client.request.delete
 import io.ktor.client.request.get
+import io.ktor.client.request.post
 import io.ktor.client.request.preparePost
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
@@ -78,6 +83,8 @@ class RemoteOllamaBackend internal constructor(
                         family = tag.details?.family,
                         quantization = tag.details?.quantizationLevel,
                         contextLength = tag.details?.contextLength,
+                        parameterSize = tag.details?.parameterSize,
+                        capabilities = tag.capabilities.toSet(),
                     )
                 }.sortedBy { it.displayName },
             )
@@ -105,7 +112,15 @@ class RemoteOllamaBackend internal constructor(
                     request.systemPrompt?.takeIf { it.isNotBlank() }?.let {
                         add(OllamaMessage(role = "system", content = it))
                     }
-                    request.messages.forEach { add(OllamaMessage(role = it.role.wire(), content = it.content)) }
+                    request.messages.forEach {
+                        add(
+                            OllamaMessage(
+                                role = it.role.wire(),
+                                content = it.content,
+                                images = it.images.takeIf { images -> images.isNotEmpty() }?.map(::base64),
+                            ),
+                        )
+                    }
                 },
                 stream = true,
                 options = OllamaOptions(
@@ -189,6 +204,92 @@ class RemoteOllamaBackend internal constructor(
         }
     }
 
+    override suspend fun loadedModels(): Result<List<LoadedModel>> = call {
+        val response = client.get("$root/api/ps")
+        response.failureOrNull()?.let { return@call Result.failure(OllamaException(it)) }
+        val ps: OllamaPsResponse = response.body()
+        Result.success(
+            ps.models.map {
+                LoadedModel(
+                    id = it.name,
+                    sizeBytes = it.size,
+                    vramBytes = it.sizeVram,
+                    expiresAt = it.expiresAt,
+                    contextLength = it.contextLength,
+                )
+            },
+        )
+    }
+
+    override suspend fun unloadModel(model: String): Result<Unit> = call {
+        val response = client.post("$root/api/generate") {
+            contentType(ContentType.Application.Json)
+            setBody(OllamaUnloadRequest(model, keepAlive = 0))
+        }
+        response.failureOrNull()?.let { Result.failure(OllamaException(it)) } ?: Result.success(Unit)
+    }
+
+    override suspend fun deleteModel(model: String): Result<Unit> = call {
+        val response = client.delete("$root/api/delete") {
+            contentType(ContentType.Application.Json)
+            setBody(OllamaModelRequest(model))
+        }
+        response.failureOrNull()?.let { Result.failure(OllamaException(it)) } ?: Result.success(Unit)
+    }
+
+    override fun pullModel(model: String): Flow<PullEvent> = channelFlow {
+        try {
+            client.preparePost("$root/api/pull") {
+                contentType(ContentType.Application.Json)
+                setBody(OllamaModelRequest(model, stream = true))
+            }.execute { response ->
+                response.failureOrNull()?.let {
+                    send(PullEvent.Failed(it))
+                    return@execute
+                }
+                val channel = response.bodyAsChannel()
+                while (!channel.isClosedForRead && isActive) {
+                    val line = channel.readUTF8Line() ?: break
+                    if (line.isBlank()) continue
+                    val chunk = try {
+                        OllamaHttpClient.json.decodeFromString(OllamaPullChunk.serializer(), line)
+                    } catch (e: SerializationException) {
+                        continue
+                    }
+                    when {
+                        chunk.error != null -> { send(PullEvent.Failed(LlmError.Rejected(chunk.error))); return@execute }
+                        chunk.status == "success" -> { send(PullEvent.Done); return@execute }
+                        chunk.status != null -> send(PullEvent.Progress(chunk.status, chunk.completed, chunk.total))
+                    }
+                }
+                // Closed without "success": the download did not finish.
+                send(PullEvent.Failed(LlmError.StreamInterrupted))
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            send(PullEvent.Failed(e.toLlmError()))
+        }
+    }
+
+    /** Ollama explains a refusal as {"error": "..."}; surface that rather than a bare status code. */
+    private suspend fun HttpResponse.failureOrNull(): LlmError? {
+        if (status.isSuccess()) return null
+        val text = runCatching { bodyAsText() }.getOrNull()
+        val message = text?.let {
+            runCatching { OllamaHttpClient.json.decodeFromString(OllamaErrorBody.serializer(), it).error }.getOrNull()
+        }
+        return if (message != null) LlmError.Rejected(message) else LlmError.Server(status.value, text)
+    }
+
+    private inline fun <T> call(block: () -> Result<T>): Result<T> = try {
+        block()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Throwable) {
+        Result.failure(OllamaException(e.toLlmError()))
+    }
+
     private fun mapHttpError(status: HttpStatusCode, body: String?, model: String): LlmError = when {
         status == HttpStatusCode.NotFound && body?.contains("model", ignoreCase = true) == true ->
             LlmError.ModelNotFound(model)
@@ -209,3 +310,6 @@ private fun Role.wire(): String = when (this) {
 }
 
 private fun HttpStatusCode.isSuccess(): Boolean = value in 200..299
+
+@OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
+private fun base64(bytes: ByteArray): String = kotlin.io.encoding.Base64.Default.encode(bytes)

@@ -127,6 +127,15 @@ class ContextWindowTest {
     }
 
     @Test
+    fun an_image_costs_far_more_than_its_caption() {
+        val withImage = ChatMessage(Role.USER, "what is this?", images = listOf(byteArrayOf(1)))
+        val plain = ChatMessage(Role.USER, "what is this?")
+
+        val difference = planContext(listOf(withImage)).estimatedTokens - planContext(listOf(plain)).estimatedTokens
+        assertEquals(IMAGE_TOKENS, difference)
+    }
+
+    @Test
     fun an_empty_conversation_produces_an_empty_plan_rather_than_failing() {
         val plan = planContext(emptyList(), budgetTokens = 4096)
         assertTrue(plan.messages.isEmpty())

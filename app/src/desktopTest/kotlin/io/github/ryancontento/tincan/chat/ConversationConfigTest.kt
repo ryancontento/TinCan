@@ -1,5 +1,7 @@
 package io.github.ryancontento.tincan.chat
 
+import io.github.ryancontento.tincan.data.TinCanSettings
+import io.github.ryancontento.tincan.data.db.ConversationEntity
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -43,5 +45,33 @@ class ConversationConfigTest {
         assertEquals("qwen3:8b", resolveModel(conversationModel = "qwen3:8b", globalModel = "phi4"))
         assertEquals("phi4", resolveModel(conversationModel = null, globalModel = "phi4"))
         assertNull(resolveModel(conversationModel = null, globalModel = null))
+    }
+
+    @Test
+    fun a_conversations_own_options_win_and_blanks_follow_settings() {
+        val settings = TinCanSettings(temperature = 0.7f, numCtx = 8192, keepAlive = "5m")
+        val conversation = ConversationEntity(
+            title = "t", defaultModelId = null, backendId = "srv", systemPrompt = null,
+            createdAt = 0, updatedAt = 0, temperature = 0.1f, numCtx = null,
+        )
+
+        val options = resolveOptions(conversation, settings)
+        assertEquals(0.1f, options.temperature)
+        assertEquals(8192, options.numCtx)
+        assertEquals("5m", options.keepAlive, "keep_alive is a server concern and stays global")
+
+        assertEquals(0.7f, resolveOptions(null, settings).temperature)
+    }
+
+    @Test
+    fun option_text_that_does_not_make_sense_means_follow_settings() {
+        assertEquals(0.5f, parseTemperature(" 0.5 "))
+        assertNull(parseTemperature(""))
+        assertNull(parseTemperature("hot"))
+        assertNull(parseTemperature("7"), "Ollama's range is 0 to 2")
+
+        assertEquals(16384, parseNumCtx("16384"))
+        assertNull(parseNumCtx("0"))
+        assertNull(parseNumCtx("-5"))
     }
 }

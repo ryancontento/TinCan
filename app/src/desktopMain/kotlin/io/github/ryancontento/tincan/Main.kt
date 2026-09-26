@@ -1,8 +1,15 @@
 package io.github.ryancontento.tincan
 
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Tray
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
@@ -11,6 +18,7 @@ import io.github.ryancontento.tincan.data.SettingsRepository
 import io.github.ryancontento.tincan.data.appDataDir
 import io.github.ryancontento.tincan.di.appModule
 import io.github.ryancontento.tincan.di.platformModule
+import io.github.ryancontento.tincan.ui.systemTrayAvailable
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.koin.core.context.startKoin
@@ -49,7 +57,13 @@ fun main() {
     val savedX = saved?.x
     val savedY = saved?.y
 
+    val trayAvailable = systemTrayAvailable()
+
     application {
+        val appSettings by settings.settings.collectAsState(initial = null)
+        var windowVisible by remember { mutableStateOf(true) }
+        val useTray = trayAvailable && appSettings?.closeToTray == true
+
         val windowState = rememberWindowState(
             size = DpSize(
                 (saved?.width ?: DEFAULT_WIDTH).dp,
@@ -62,25 +76,44 @@ fun main() {
             },
         )
 
+        // On close or hide, not on drag: resizing fires continuously. Never block exit.
+        fun saveGeometry() = runCatching {
+            runBlocking {
+                settings.setWindowGeometry(
+                    width = windowState.size.width.value.toInt(),
+                    height = windowState.size.height.value.toInt(),
+                    x = windowState.position.x.value.toInt(),
+                    y = windowState.position.y.value.toInt(),
+                )
+            }
+        }
+
+        val icon = painterResource("tincan.png")
+
+        if (useTray) {
+            Tray(
+                icon = icon,
+                tooltip = "TinCan",
+                onAction = { windowVisible = true },
+                menu = {
+                    Item("Open TinCan", onClick = { windowVisible = true })
+                    Item("Quit", onClick = { saveGeometry(); exitApplication() })
+                },
+            )
+        }
+
         Window(
             onCloseRequest = {
-                // On close, not on drag: resizing fires continuously. Never block exit.
-                runCatching {
-                    runBlocking {
-                        settings.setWindowGeometry(
-                            width = windowState.size.width.value.toInt(),
-                            height = windowState.size.height.value.toInt(),
-                            x = windowState.position.x.value.toInt(),
-                            y = windowState.position.y.value.toInt(),
-                        )
-                    }
-                }
-                exitApplication()
+                saveGeometry()
+                if (useTray) windowVisible = false else exitApplication()
             },
+            visible = windowVisible,
             state = windowState,
             title = "TinCan",
-            icon = painterResource("tincan.png"),
+            icon = icon,
         ) {
+            // Reopening from the tray should land in front, not behind the window that had focus.
+            LaunchedEffect(windowVisible) { if (windowVisible) window.toFront() }
             App()
         }
     }

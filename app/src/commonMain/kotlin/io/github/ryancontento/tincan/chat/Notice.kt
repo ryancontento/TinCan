@@ -35,5 +35,7 @@ fun LlmError.describe(): String = when (this) {
     is LlmError.ModelNotFound -> "That server does not have \"$model\" pulled."
     LlmError.StreamInterrupted -> "The connection dropped mid-reply. What arrived is kept below."
     is LlmError.Server -> "The server returned $code."
+    // Ollama's own words, e.g. "pull model manifest: file does not exist".
+    is LlmError.Rejected -> "The server refused: $message"
     is LlmError.Unknown -> "Unexpected failure: ${cause.message ?: cause::class.simpleName}"
 }

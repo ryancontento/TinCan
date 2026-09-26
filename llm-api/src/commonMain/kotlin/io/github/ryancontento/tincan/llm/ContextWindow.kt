@@ -40,7 +40,7 @@ fun planContext(
     val systemCost = systemPrompt?.let { cost(it) } ?: 0
 
     if (budgetTokens == null || budgetTokens <= 0) {
-        return ContextPlan(messages, 0, systemCost + messages.sumOf { cost(it.content) }, null)
+        return ContextPlan(messages, 0, systemCost + messages.sumOf { cost(it) }, null)
     }
 
     // The system prompt is never dropped, and the reply shares the window.
@@ -49,7 +49,7 @@ fun planContext(
     val kept = ArrayDeque<ChatMessage>()
     var used = 0
     for (message in messages.asReversed()) {   // newest turns win the budget
-        val messageCost = cost(message.content)
+        val messageCost = cost(message)
         // The newest is kept even if oversized; a truncated question is useless.
         if (kept.isNotEmpty() && used + messageCost > usable) break
         kept.addFirst(message)
@@ -62,8 +62,13 @@ fun planContext(
 /** Text plus the per-message framing carried on the wire. */
 private fun cost(content: String): Int = estimateTokens(content) + MESSAGE_OVERHEAD_TOKENS
 
+private fun cost(message: ChatMessage): Int = cost(message.content) + message.images.size * IMAGE_TOKENS
+
 private const val CHARS_PER_TOKEN = 3.6
 private const val MESSAGE_OVERHEAD_TOKENS = 4
+
+/** Vision encoders spend a few hundred to over a thousand tokens per image; this errs high. */
+const val IMAGE_TOKENS = 1_024
 const val DEFAULT_REPLY_RESERVE_TOKENS = 512
 
 /** Share of budget above which the UI warns. */

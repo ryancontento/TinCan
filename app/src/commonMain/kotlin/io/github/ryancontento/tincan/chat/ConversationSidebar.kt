@@ -51,6 +51,7 @@ import io.github.ryancontento.tincan.ui.TinIconButton
 import io.github.ryancontento.tincan.ui.TinIconGlyph
 import io.github.ryancontento.tincan.ui.TinField
 import io.github.ryancontento.tincan.ui.TinSectionLabel
+import kotlinx.datetime.Clock
 
 /**
  * A desktop-shaped layout, not a phone screen stretched wide.
@@ -74,6 +75,7 @@ fun ConversationSidebar(
     onNew: () -> Unit,
     onDelete: (Long) -> Unit,
     onEditConversation: (Long) -> Unit,
+    onTogglePin: (Long, Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -125,7 +127,7 @@ fun ConversationSidebar(
             if (search.active) {
                 SearchResults(search, enabled, onOpenHit)
             } else {
-                ConversationList(conversations, activeId, enabled, onSelect, onDelete, onEditConversation)
+                ConversationList(conversations, activeId, enabled, onSelect, onDelete, onEditConversation, onTogglePin)
             }
         }
 
@@ -162,6 +164,7 @@ private fun ConversationList(
     onSelect: (Long) -> Unit,
     onDelete: (Long) -> Unit,
     onEdit: (Long) -> Unit,
+    onTogglePin: (Long, Boolean) -> Unit,
 ) {
     if (conversations.isEmpty()) {
         Text(
@@ -173,16 +176,25 @@ private fun ConversationList(
         return
     }
 
+    // Recomputed with the list, which changes whenever a conversation does, so "Today" rolls over in use.
+    val groups = remember(conversations) { groupConversations(conversations, Clock.System.now().toEpochMilliseconds()) }
+
     LazyColumn(verticalArrangement = Arrangement.spacedBy(1.dp)) {
-        items(conversations, key = { it.id }) { conversation ->
-            ConversationRow(
-                conversation = conversation,
-                selected = conversation.id == activeId,
-                enabled = enabled,
-                onSelect = { onSelect(conversation.id) },
-                onDelete = { onDelete(conversation.id) },
-                onEdit = { onEdit(conversation.id) },
-            )
+        groups.forEach { group ->
+            item(key = "group-${group.label}") {
+                TinSectionLabel(group.label, Modifier.padding(start = 6.dp, top = 8.dp, bottom = 2.dp))
+            }
+            items(group.conversations, key = { it.id }) { conversation ->
+                ConversationRow(
+                    conversation = conversation,
+                    selected = conversation.id == activeId,
+                    enabled = enabled,
+                    onSelect = { onSelect(conversation.id) },
+                    onDelete = { onDelete(conversation.id) },
+                    onEdit = { onEdit(conversation.id) },
+                    onTogglePin = { onTogglePin(conversation.id, !conversation.pinned) },
+                )
+            }
         }
     }
 }
@@ -260,6 +272,7 @@ private fun ConversationRow(
     onSelect: () -> Unit,
     onDelete: () -> Unit,
     onEdit: () -> Unit,
+    onTogglePin: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
     val interaction = remember { MutableInteractionSource() }
@@ -331,6 +344,13 @@ private fun ConversationRow(
             }
 
             hovered || selected -> {
+                TinIconButton(
+                    onClick = onTogglePin,
+                    icon = TinIcon.PIN,
+                    description = if (conversation.pinned) "Unpin" else "Pin",
+                    enabled = enabled,
+                    tint = if (conversation.pinned) colors.primary else null,
+                )
                 TinIconButton(onClick = onEdit, icon = TinIcon.PENCIL, description = "Rename", enabled = enabled)
                 TinIconButton(
                     onClick = { confirming = true },

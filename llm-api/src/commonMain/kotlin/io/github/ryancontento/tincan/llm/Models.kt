@@ -9,6 +9,8 @@ enum class Role { USER, ASSISTANT, SYSTEM }
 data class ChatMessage(
     val role: Role,
     val content: String,
+    /** Raw image bytes for vision models. Resent every turn: the server keeps no state. */
+    val images: List<ByteArray> = emptyList(),
 )
 
 data class ModelInfo(
@@ -19,6 +21,23 @@ data class ModelInfo(
     val quantization: String? = null,
     /** What the model itself supports, which is not what Ollama necessarily allocates. */
     val contextLength: Int? = null,
+    /** e.g. "8B". */
+    val parameterSize: String? = null,
+    /** Ollama's capability tags, e.g. "completion", "vision", "tools". Empty on older servers. */
+    val capabilities: Set<String> = emptySet(),
+) {
+    val supportsImages: Boolean get() = "vision" in capabilities
+}
+
+data class LoadedModel(
+    val id: String,
+    val sizeBytes: Long?,
+    /** Below [sizeBytes] means part of it spilled to system memory and runs slower. */
+    val vramBytes: Long?,
+    /** ISO-8601 time the server will unload it on its own. */
+    val expiresAt: String?,
+    /** The context the server actually allocated for it. */
+    val contextLength: Int?,
 )
 
 data class ChatRequest(

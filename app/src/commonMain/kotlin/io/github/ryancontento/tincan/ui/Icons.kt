@@ -20,7 +20,7 @@ import androidx.compose.ui.unit.dp
  * can in full colour next to flat monochrome text. These scale with the window,
  * take the current content colour, and add no dependency.
  */
-enum class TinIcon { SEARCH, PLUS, PENCIL, TRASH, CLOSE, CHEVRON_LEFT }
+enum class TinIcon { SEARCH, PLUS, PENCIL, TRASH, CLOSE, CHEVRON_LEFT, PIN }
 
 @Composable
 fun TinIconGlyph(
@@ -75,6 +75,22 @@ fun TinIconGlyph(
             TinIcon.CHEVRON_LEFT -> {
                 drawLine(tint, Offset(w * 0.62f, w * 0.20f), Offset(w * 0.34f, w * 0.50f), stroke.width, StrokeCap.Round)
                 drawLine(tint, Offset(w * 0.34f, w * 0.50f), Offset(w * 0.62f, w * 0.80f), stroke.width, StrokeCap.Round)
+            }
+
+            TinIcon.PIN -> {
+                // A pushpin: flat head, flared collar, needle.
+                val head = Path().apply {
+                    moveTo(w * 0.30f, w * 0.14f)
+                    lineTo(w * 0.70f, w * 0.14f)
+                    moveTo(w * 0.37f, w * 0.14f)
+                    lineTo(w * 0.37f, w * 0.44f)
+                    lineTo(w * 0.24f, w * 0.58f)
+                    lineTo(w * 0.76f, w * 0.58f)
+                    lineTo(w * 0.63f, w * 0.44f)
+                    lineTo(w * 0.63f, w * 0.14f)
+                }
+                drawPath(head, tint, style = stroke)
+                drawLine(tint, Offset(w * 0.5f, w * 0.58f), Offset(w * 0.5f, w * 0.90f), stroke.width, StrokeCap.Round)
             }
         }
     }

@@ -2,7 +2,12 @@ package io.github.ryancontento.tincan.chat
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import io.github.ryancontento.tincan.attach.Attachment
+import io.github.ryancontento.tincan.attach.PickedFile
+import io.github.ryancontento.tincan.attach.classify
 import io.github.ryancontento.tincan.data.ChatRepository
+import io.github.ryancontento.tincan.data.ImageAttachment
+import io.github.ryancontento.tincan.data.db.AttachmentEntity
 import io.github.ryancontento.tincan.data.ServerKey
 import io.github.ryancontento.tincan.data.SettingsRepository
 import io.github.ryancontento.tincan.data.TinCanSettings
@@ -59,7 +64,16 @@ data class ChatUiState(
     val search: SearchState = SearchState(),
     /** Set once when a search hit is opened, cleared as soon as it is scrolled to. */
     val scrollToMessageId: Long? = null,
+    /** Images waiting in the composer for the next send. */
+    val draftImages: List<DraftImage> = emptyList(),
+    /** Images already sent in the active conversation, by message. */
+    val attachments: Map<Long, List<AttachmentEntity>> = emptyMap(),
 ) {
+    /** False only when the server says so; older servers report no capabilities, so it is unknown. */
+    val activeModelSeesImages: Boolean
+        get() = availableModels.firstOrNull { it.id == activeModel }
+            ?.let { it.capabilities.isEmpty() || it.supportsImages } ?: true
+
     val canContinue: Boolean
         get() = !isGenerating && messages.lastOrNull()
             ?.let { it.role == MessageRole.ASSISTANT && it.status == MessageStatus.INCOMPLETE } == true
@@ -75,6 +89,8 @@ data class ChatUiState(
     val canRegenerate: Boolean
         get() = !isGenerating && messages.lastOrNull()?.role == MessageRole.ASSISTANT
 }
+
+class DraftImage(val name: String, val image: ImageAttachment)
 
 data class SearchState(val term: String = "", val hits: List<SearchHit> = emptyList()) {
     val active: Boolean get() = term.isNotBlank()
@@ -113,6 +129,7 @@ class ChatViewModel(
         observeSettings()
         observeConversations()
         observeActiveMessages()
+        observeAttachments()
         observeQueue()
         observeConnection()
     }
@@ -168,6 +185,13 @@ class ChatViewModel(
             }
     }
 
+    /** Separate from messages: the attachments table stays quiet while a reply streams. */
+    private fun observeAttachments() = viewModelScope.launch {
+        activeId
+            .flatMapLatest { id -> if (id == null) flowOf(emptyList()) else chatRepository.observeAttachments(id) }
+            .collect { rows -> _state.update { it.copy(attachments = rows.groupBy { row -> row.messageId }) } }
+    }
+
     private fun observeQueue() = viewModelScope.launch {
         chatRepository.observeConversationsWithPendingMessages().collect { ids ->
             _state.update { it.copy(queuedCount = ids.size) }
@@ -197,6 +221,11 @@ class ChatViewModel(
 
     fun checkConnection() = connection.check()
 
+    /** The first showing is covered by the connection coming online; this catches returns. */
+    fun onShown() {
+        if (connection.state.value == ConnectionState.ONLINE) refreshModels()
+    }
+
     fun select(conversationId: Long) {
         if (_state.value.isGenerating) return   // switching mid-stream would orphan the reply
         activeId.value = conversationId
@@ -212,6 +241,12 @@ class ChatViewModel(
     fun deleteConversation(id: Long) = viewModelScope.launch {
         chatRepository.deleteConversation(id)
         if (activeId.value == id) activeId.value = null
+    }
+
+    /** Not mid-reply: the stream would keep writing into a thread now pointed elsewhere. */
+    fun selectServer(url: String) {
+        if (_state.value.isGenerating) return
+        viewModelScope.launch { settingsRepository.setServerUrl(url) }
     }
 
     fun selectModel(id: String) = viewModelScope.launch {
@@ -241,17 +276,27 @@ class ChatViewModel(
             .onFailure { error -> (error as? OllamaException)?.error?.let(connection::reportUnreachable) }
     }
 
-    fun send(text: String) {
+    /** False when nothing was sent, so the composer keeps what the user typed. */
+    fun send(text: String): Boolean {
         val body = text.trim()
-        val settings = _state.value.settings
-        val model = _state.value.activeModel ?: return
-        if (body.isEmpty() || _state.value.isGenerating) return
+        val state = _state.value
+        val settings = state.settings
+        val model = state.activeModel ?: return false
+        val images = state.draftImages.map { it.image }
+        if ((body.isEmpty() && images.isEmpty()) || state.isGenerating) return false
+        if (images.isNotEmpty() && !state.activeModelSeesImages) {
+            _state.update {
+                it.copy(notice = Notice("$model can't read images. Pick a vision model, or remove the image.", Notice.Severity.ERROR))
+            }
+            return false
+        }
+        _state.update { it.copy(draftImages = emptyList()) }
 
         viewModelScope.launch {
             val serverKey = settingsRepository.serverKeyFor(settings.serverUrl)
             val conversationId = ensureConversation(model, settings, serverKey)
-            val userMessageId = chatRepository.appendUserMessage(conversationId, body, serverKey)
-            chatRepository.titleFromFirstMessageIfUnset(conversationId, body)
+            val userMessageId = chatRepository.appendUserMessage(conversationId, body, serverKey, images)
+            chatRepository.titleFromFirstMessageIfUnset(conversationId, body.ifEmpty { "Image" })
 
             if (connection.isOffline) {
                 // Already known down, so skip the timeout. It sends itself on reconnect.
@@ -263,6 +308,28 @@ class ChatViewModel(
             }
             generation = launch { generate(conversationId, model, settings, userMessageId) }
         }
+        return true
+    }
+
+    /**
+     * Images join the draft; text files come back as blocks for the composer to insert,
+     * so the user sees exactly what will be sent. Anything else is explained, not dropped silently.
+     */
+    fun attach(files: List<PickedFile>): List<String> {
+        val results = files.map(::classify)
+        val images = results.filterIsInstance<Attachment.Image>().map { DraftImage(it.name, it.image) }
+        val rejected = results.filterIsInstance<Attachment.Rejected>().map { it.reason }
+        _state.update {
+            it.copy(
+                draftImages = it.draftImages + images,
+                notice = if (rejected.isEmpty()) it.notice else Notice("Not attached: ${rejected.joinToString("; ")}.", Notice.Severity.INFO),
+            )
+        }
+        return results.filterIsInstance<Attachment.Text>().map { it.block }
+    }
+
+    fun removeDraftImage(index: Int) = _state.update {
+        it.copy(draftImages = it.draftImages.filterIndexed { i, _ -> i != index })
     }
 
     /** Sends the queued message in the active conversation, if there is one. */
@@ -338,12 +405,14 @@ class ChatViewModel(
         val settings = _state.value.settings
         val model = _state.value.activeModel ?: return
         val conversationId = activeId.value ?: return
-        if (body.isEmpty() || _state.value.isGenerating) return
+        // Editing the words keeps the images; the rewrite deletes the row they hang off.
+        val images = _state.value.attachments[messageId].orEmpty().map { ImageAttachment(it.mimeType, it.bytes) }
+        if ((body.isEmpty() && images.isEmpty()) || _state.value.isGenerating) return
 
         viewModelScope.launch {
             val serverKey = settingsRepository.serverKeyFor(settings.serverUrl)
             chatRepository.truncateFrom(conversationId, messageId)
-            val userMessageId = chatRepository.appendUserMessage(conversationId, body, serverKey)
+            val userMessageId = chatRepository.appendUserMessage(conversationId, body, serverKey, images)
 
             if (connection.isOffline) {
                 chatRepository.markPending(userMessageId)
@@ -363,6 +432,15 @@ class ChatViewModel(
     /** Null hands the conversation back to the global default. */
     fun setConversationSystemPrompt(id: Long, prompt: String?) = viewModelScope.launch {
         chatRepository.setSystemPrompt(id, prompt)
+    }
+
+    /** Blank or invalid text hands that setting back to the global value. */
+    fun setConversationOptions(id: Long, temperature: String, numCtx: String) = viewModelScope.launch {
+        chatRepository.setGenerationOptions(id, parseTemperature(temperature), parseNumCtx(numCtx))
+    }
+
+    fun setPinned(id: Long, pinned: Boolean) = viewModelScope.launch {
+        chatRepository.setPinned(id, pinned)
     }
 
     fun search(term: String) = viewModelScope.launch {
@@ -390,7 +468,7 @@ class ChatViewModel(
     suspend fun buildExport(format: ExportFormat): ExportDocument? {
         val id = activeId.value ?: return null
         val conversation = chatRepository.conversation(id) ?: return null
-        return exportConversation(conversation, chatRepository.messages(id), format)
+        return exportConversation(conversation, chatRepository.messages(id), format, chatRepository.attachments(id))
     }
 
     /** A write failure (read-only folder, full disk) becomes a notice rather than a crash. */
@@ -435,17 +513,19 @@ class ChatViewModel(
         resumeMessageId: Long? = null,
         resumePrefix: String = "",
     ) {
-        // Read from the row, not from settings: the conversation owns its prompt.
+        // Read from the row, not from settings: the conversation owns its prompt and overrides.
+        val conversation = chatRepository.conversation(conversationId)
         val systemPrompt = resolveSystemPrompt(
-            conversationPrompt = chatRepository.conversation(conversationId)?.systemPrompt,
+            conversationPrompt = conversation?.systemPrompt,
             globalPrompt = settings.systemPrompt,
         )
+        val options = resolveOptions(conversation, settings)
 
         // Trim locally: Ollama drops old turns at num_ctx without telling the client.
         val plan = planContext(
             messages = chatRepository.historyFor(conversationId),
             systemPrompt = systemPrompt,
-            budgetTokens = settings.numCtx,
+            budgetTokens = options.numCtx,
         )
         _state.update { it.copy(context = plan) }
 
@@ -483,7 +563,7 @@ class ChatViewModel(
             model = model,
             messages = plan.messages,
             systemPrompt = systemPrompt,
-            options = settings.toGenerationOptions(),
+            options = options,
         )
 
         try {

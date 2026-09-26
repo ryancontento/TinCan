@@ -1,5 +1,6 @@
 package io.github.ryancontento.tincan.chat
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -34,9 +35,13 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isAltPressed
@@ -53,6 +58,10 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import io.github.ryancontento.tincan.attach.FilePicker
+import io.github.ryancontento.tincan.data.SavedServer
+import io.github.ryancontento.tincan.data.SendKey
+import io.github.ryancontento.tincan.data.db.AttachmentEntity
 import io.github.ryancontento.tincan.data.db.MessageEntity
 import io.github.ryancontento.tincan.data.db.MessageRole
 import io.github.ryancontento.tincan.data.db.MessageStatus
@@ -65,20 +74,28 @@ import io.github.ryancontento.tincan.ui.TinButton
 import io.github.ryancontento.tincan.ui.TinCaret
 import io.github.ryancontento.tincan.ui.TinDivider
 import io.github.ryancontento.tincan.ui.TinField
+import io.github.ryancontento.tincan.ui.TinIcon
+import io.github.ryancontento.tincan.ui.TinIconButton
 import io.github.ryancontento.tincan.ui.TinOutlinedButton
 import io.github.ryancontento.tincan.ui.TinToolbarButton
+import io.github.ryancontento.tincan.ui.decodeImage
+import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 
 @Composable
 fun ChatScreen(
     onOpenSettings: () -> Unit,
+    onOpenModels: () -> Unit,
     viewModel: ChatViewModel = koinViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
+    // Coming back from the Models screen, the list may have gained or lost a model.
+    LaunchedEffect(Unit) { viewModel.onShown() }
     // TextFieldValue rather than String because Ctrl+Enter has to insert a
     // newline at the caret, which means knowing where the caret is.
-    var draft by remember { mutableStateOf(TextFieldValue("")) }
+    // Saveable so a trip to Models or Settings does not throw away a half-written message.
+    var draft by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue("")) }
     // Hoisted so Ctrl+K can open it from outside the top bar.
     var modelMenuOpen by remember { mutableStateOf(false) }
     // The stored width is the truth until the pointer touches the handle, which
@@ -89,6 +106,8 @@ fun ChatScreen(
     var settingsForConversation by remember { mutableStateOf<Long?>(null) }
 
     val fileSaver: FileSaver = koinInject()
+    val filePicker: FilePicker = koinInject()
+    val scope = rememberCoroutineScope()
 
     Surface(
         Modifier
@@ -143,6 +162,7 @@ fun ChatScreen(
                 onNew = viewModel::newConversation,
                 onDelete = viewModel::deleteConversation,
                 onEditConversation = { viewModel.select(it); settingsForConversation = it },
+                onTogglePin = { id, pinned -> viewModel.setPinned(id, pinned) },
             )
 
             Column(Modifier.weight(1f).fillMaxHeight()) {
@@ -150,10 +170,15 @@ fun ChatScreen(
                     modelLabel = state.activeModel ?: "No model",
                     models = state.availableModels.map { it.id },
                     serverUrl = state.settings.serverUrl,
+                    serverName = state.settings.activeServerName,
+                    savedServers = state.settings.savedServers,
+                    canSwitchServer = !state.isGenerating,
+                    onSelectServer = viewModel::selectServer,
                     onSelectModel = viewModel::selectModel,
                     menuOpen = modelMenuOpen,
                     onMenuOpenChange = { modelMenuOpen = it },
                     onOpenSettings = onOpenSettings,
+                    onOpenModels = onOpenModels,
                     onOpenConversation = { state.activeConversationId?.let { settingsForConversation = it } },
                     onExport = { format -> viewModel.export(format, fileSaver) },
                     hasConversation = state.activeConversationId != null,
@@ -200,7 +225,18 @@ fun ChatScreen(
                         onDraftChange = { draft = it },
                         isGenerating = state.isGenerating,
                         canSend = state.activeModel != null,
-                        onSend = { viewModel.send(draft.text); draft = TextFieldValue("") },
+                        sendKey = state.settings.sendKey,
+                        onSend = { if (viewModel.send(draft.text)) draft = TextFieldValue("") },
+                        draftImages = state.draftImages,
+                        onRemoveImage = viewModel::removeDraftImage,
+                        onAttach = {
+                            scope.launch {
+                                val blocks = viewModel.attach(filePicker.pick())
+                                if (blocks.isNotEmpty()) draft = draft.withBlocksAppended(blocks)
+                            }
+                        },
+                        // True means an image was taken, so the key is consumed; otherwise text pastes as normal.
+                        onPasteImage = { filePicker.clipboardImage()?.let { viewModel.attach(listOf(it)); true } ?: false },
                         onStop = viewModel::stop,
                     )
                 }
@@ -216,9 +252,12 @@ fun ChatScreen(
                 conversation = conversation,
                 models = state.availableModels.map { it.id },
                 globalSystemPrompt = state.settings.systemPrompt,
-                onSave = { title, prompt ->
+                globalTemperature = state.settings.temperature,
+                globalNumCtx = state.settings.numCtx,
+                onSave = { title, prompt, temperature, numCtx ->
                     viewModel.renameConversation(conversation.id, title)
                     viewModel.setConversationSystemPrompt(conversation.id, prompt)
+                    viewModel.setConversationOptions(conversation.id, temperature, numCtx)
                 },
                 onSelectModel = viewModel::selectModel,
                 onDismiss = { settingsForConversation = null },
@@ -231,10 +270,15 @@ private fun TopBar(
     modelLabel: String,
     models: List<String>,
     serverUrl: String,
+    serverName: String?,
+    savedServers: List<SavedServer>,
+    canSwitchServer: Boolean,
+    onSelectServer: (String) -> Unit,
     onSelectModel: (String) -> Unit,
     menuOpen: Boolean,
     onMenuOpenChange: (Boolean) -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenModels: () -> Unit,
     onOpenConversation: () -> Unit,
     onExport: (ExportFormat) -> Unit,
     hasConversation: Boolean,
@@ -272,14 +316,16 @@ private fun TopBar(
         }
 
         Spacer(Modifier.width(4.dp))
-        Text(
-            serverUrl,
-            style = MaterialTheme.typography.labelMedium.merge(MonoStyle),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
+        Box(Modifier.weight(1f)) {
+            ServerPicker(
+                serverUrl = serverUrl,
+                serverName = serverName,
+                savedServers = savedServers,
+                enabled = canSwitchServer,
+                onSelectServer = onSelectServer,
+                onManage = onOpenSettings,
+            )
+        }
         ConnectionPill(connection, queuedCount)
 
         if (hasConversation) {
@@ -297,7 +343,56 @@ private fun TopBar(
             }
         }
         TinToolbarButton(onClick = onReload, label = "Reload")
+        TinToolbarButton(onClick = onOpenModels, label = "Models")
         TinToolbarButton(onClick = onOpenSettings, label = "Settings")
+    }
+}
+
+/** The current server, named if it is saved; opens a list of the saved ones to switch to. */
+@Composable
+private fun ServerPicker(
+    serverUrl: String,
+    serverName: String?,
+    savedServers: List<SavedServer>,
+    enabled: Boolean,
+    onSelectServer: (String) -> Unit,
+    onManage: () -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    val colors = MaterialTheme.colorScheme
+
+    TinToolbarButton(
+        onClick = { open = true },
+        label = serverName ?: serverUrl,
+        enabled = enabled,
+        mono = serverName == null,
+    )
+    DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+        savedServers.forEach { server ->
+            DropdownMenuItem(
+                text = {
+                    Column {
+                        Text(server.name, style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            server.url,
+                            style = MaterialTheme.typography.labelSmall.merge(MonoStyle),
+                            color = colors.onSurfaceVariant,
+                        )
+                    }
+                },
+                onClick = { open = false; onSelectServer(server.url) },
+            )
+        }
+        DropdownMenuItem(
+            text = {
+                Text(
+                    if (savedServers.isEmpty()) "Save servers to switch here…" else "Manage servers…",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colors.onSurfaceVariant,
+                )
+            },
+            onClick = { open = false; onManage() },
+        )
     }
 }
 
@@ -440,6 +535,7 @@ private fun Transcript(
                 val isStreaming = message.id == state.streamingMessageId
                 MessageRow(
                     message = message,
+                    images = state.attachments[message.id].orEmpty(),
                     overrideContent = if (isStreaming) state.streamingText.ifEmpty { "…" } else null,
                     thinking = if (isStreaming) state.streamingThinking else message.thinking.orEmpty(),
                     // A model chip only where it changes, so a single-model
@@ -489,6 +585,7 @@ private fun Transcript(
 @Composable
 private fun MessageRow(
     message: MessageEntity,
+    images: List<AttachmentEntity>,
     overrideContent: String?,
     thinking: String,
     showModel: Boolean,
@@ -538,10 +635,17 @@ private fun MessageRow(
             if (!isUser) {
                 ReasoningTrace(thinking = thinking, isStreaming = overrideContent != null)
             }
+            if (images.isNotEmpty()) {
+                Row(Modifier.padding(bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    images.forEach { Thumbnail(it.bytes, "Attached image", Modifier.height(140.dp)) }
+                }
+            }
             if (isUser) {
                 // What the user typed is shown verbatim. Rendering it as
                 // markdown would silently eat their asterisks and hashes.
-                Text(message.content, style = MaterialTheme.typography.bodyMedium, color = colors.onSurface)
+                if (message.content.isNotEmpty()) {
+                    Text(message.content, style = MaterialTheme.typography.bodyMedium, color = colors.onSurface)
+                }
             } else {
                 MessageContent(
                     text = overrideContent ?: message.content,
@@ -632,13 +736,34 @@ private fun Composer(
     onDraftChange: (TextFieldValue) -> Unit,
     isGenerating: Boolean,
     canSend: Boolean,
+    sendKey: SendKey,
     onSend: () -> Unit,
     onStop: () -> Unit,
+    draftImages: List<DraftImage>,
+    onRemoveImage: (Int) -> Unit,
+    onAttach: () -> Unit,
+    onPasteImage: () -> Boolean,
 ) {
-    val submittable = canSend && !isGenerating && draft.text.isNotBlank()
+    // An image alone is a complete question.
+    val submittable = canSend && !isGenerating && (draft.text.isNotBlank() || draftImages.isNotEmpty())
 
     Column(Modifier.fillMaxWidth().padding(bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         TinDivider(Modifier.padding(bottom = 8.dp))
+        if (draftImages.isNotEmpty()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                draftImages.forEachIndexed { index, draftImage ->
+                    Box {
+                        Thumbnail(draftImage.image.bytes, draftImage.name, Modifier.height(56.dp))
+                        TinIconButton(
+                            onClick = { onRemoveImage(index) },
+                            icon = TinIcon.CLOSE,
+                            description = "Remove ${draftImage.name}",
+                            modifier = Modifier.align(Alignment.TopEnd),
+                        )
+                    }
+                }
+            }
+        }
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -655,6 +780,10 @@ private fun Composer(
                     // insert its own newline, so the press has to be intercepted on
                     // the way down or Send never sees it.
                     .onPreviewKeyEvent { event ->
+                        val isPaste = event.key == Key.V && event.type == KeyEventType.KeyDown &&
+                            (event.isCtrlPressed || event.isMetaPressed) && !event.isAltPressed
+                        if (isPaste && onPasteImage()) return@onPreviewKeyEvent true
+
                         when (
                             composerAction(
                                 isEnter = event.key == Key.Enter || event.key == Key.NumPadEnter,
@@ -663,6 +792,7 @@ private fun Composer(
                                 isShiftPressed = event.isShiftPressed,
                                 isMetaPressed = event.isMetaPressed,
                                 isAltPressed = event.isAltPressed,
+                                sendKey = sendKey,
                             )
                         ) {
                             ComposerAction.SEND -> {
@@ -682,6 +812,7 @@ private fun Composer(
                         }
                     },
             )
+            TinOutlinedButton(onClick = onAttach, label = "Attach")
             if (isGenerating) {
                 TinOutlinedButton(onClick = onStop, label = "Stop")
             } else {
@@ -689,11 +820,38 @@ private fun Composer(
             }
         }
         Text(
-            "Enter sends · Ctrl+Enter for a new line",
+            sendKey.hint() + " · Ctrl+V pastes an image",
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+}
+
+/** Scaled to [modifier]'s height; a placeholder if the bytes will not decode. */
+@Composable
+private fun Thumbnail(bytes: ByteArray, description: String, modifier: Modifier = Modifier) {
+    val bitmap = remember(bytes) { decodeImage(bytes) }
+    val shape = MaterialTheme.shapes.small
+    if (bitmap != null) {
+        Image(
+            bitmap = bitmap,
+            contentDescription = description,
+            contentScale = ContentScale.Fit,
+            modifier = modifier
+                .clip(shape)
+                .border(Metrics.hairline, MaterialTheme.colorScheme.outlineVariant, shape),
+        )
+    } else {
+        Box(modifier.width(56.dp).background(MaterialTheme.colorScheme.surfaceVariant, shape), contentAlignment = Alignment.Center) {
+            Text("image", style = MaterialTheme.typography.labelSmall)
+        }
+    }
+}
+
+/** Text files land at the end of the draft, each as its own block, with the caret after them. */
+internal fun TextFieldValue.withBlocksAppended(blocks: List<String>): TextFieldValue {
+    val joined = (listOf(text.trimEnd()).filter { it.isNotEmpty() } + blocks).joinToString("\n\n") + "\n"
+    return TextFieldValue(joined, TextRange(joined.length))
 }
 
 /** Replaces the selection with a line break and leaves the caret after it. */

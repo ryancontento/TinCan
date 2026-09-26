@@ -19,9 +19,15 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import io.github.ryancontento.tincan.data.SavedServer
+import io.github.ryancontento.tincan.data.SendKey
 import io.github.ryancontento.tincan.data.ThemePreference
 import io.github.ryancontento.tincan.ui.MonoStyle
 import io.github.ryancontento.tincan.ui.TinDivider
@@ -32,6 +38,8 @@ import io.github.ryancontento.tincan.ui.TinIconButton
 import io.github.ryancontento.tincan.ui.TinOutlinedButton
 import io.github.ryancontento.tincan.ui.TinSectionLabel
 import io.github.ryancontento.tincan.ui.TinSegmented
+import io.github.ryancontento.tincan.ui.TinToolbarButton
+import io.github.ryancontento.tincan.ui.systemTrayAvailable
 import org.koin.compose.viewmodel.koinViewModel
 
 @Composable
@@ -41,6 +49,7 @@ fun SettingsScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val settings = state.settings
+    val trayAvailable = remember { systemTrayAvailable() }
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize()) {
@@ -77,6 +86,36 @@ fun SettingsScreen(
                                 label = { it.name.lowercase().replaceFirstChar(Char::uppercase) },
                             )
                         }
+                        TinFormRow(
+                            label = "Send with",
+                            hint = "The other one adds a new line. Shift+Enter always adds a new line.",
+                        ) {
+                            TinSegmented(
+                                options = SendKey.entries,
+                                selected = settings.sendKey,
+                                onSelect = viewModel::setSendKey,
+                                label = {
+                                    when (it) {
+                                        SendKey.ENTER -> "Enter"
+                                        SendKey.CTRL_ENTER -> "Ctrl+Enter"
+                                    }
+                                },
+                            )
+                        }
+                        if (trayAvailable) {
+                            TinFormRow(
+                                label = "Closing the window",
+                                hint = "Hidden, TinCan keeps running, so queued messages still send. " +
+                                    "Quit from the tray icon's menu.",
+                            ) {
+                                TinSegmented(
+                                    options = listOf(false, true),
+                                    selected = settings.closeToTray,
+                                    onSelect = viewModel::setCloseToTray,
+                                    label = { if (it) "Hide to tray" else "Quit" },
+                                )
+                            }
+                        }
                     }
 
                     TinDivider()
@@ -101,6 +140,13 @@ fun SettingsScreen(
                             TinOutlinedButton(onClick = viewModel::testConnection, label = "Test connection")
                             ProbeLabel(state.probe)
                         }
+                        SavedServers(
+                            servers = settings.savedServers,
+                            currentName = settings.activeServerName,
+                            onSaveCurrent = viewModel::saveCurrentServer,
+                            onUse = viewModel::setServerUrl,
+                            onRemove = viewModel::removeServer,
+                        )
                     }
 
                     TinDivider()
@@ -180,6 +226,61 @@ private fun Section(title: String, content: @Composable () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         TinSectionLabel(title)
         content()
+    }
+}
+
+/** Named servers the top bar can switch between. Saving the current address again renames it. */
+@Composable
+private fun SavedServers(
+    servers: List<SavedServer>,
+    currentName: String?,
+    onSaveCurrent: (String) -> Unit,
+    onUse: (String) -> Unit,
+    onRemove: (String) -> Unit,
+) {
+    var name by remember(currentName) { mutableStateOf(currentName.orEmpty()) }
+    val colors = MaterialTheme.colorScheme
+
+    TinFormRow(
+        label = "Saved servers",
+        hint = "Switch between these from the address in the top bar.",
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            servers.forEach { server ->
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(server.name, style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        server.url,
+                        style = MaterialTheme.typography.labelMedium.merge(MonoStyle),
+                        color = colors.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TinToolbarButton(onClick = { onUse(server.url) }, label = "Use")
+                    TinToolbarButton(onClick = { onRemove(server.url) }, label = "Remove")
+                }
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                TinField(
+                    value = name,
+                    onValueChange = { name = it },
+                    placeholder = "Name, e.g. MacBook",
+                    modifier = Modifier.widthIn(max = 220.dp),
+                )
+                TinOutlinedButton(
+                    onClick = { onSaveCurrent(name) },
+                    label = if (currentName != null) "Rename this address" else "Save this address",
+                )
+            }
+        }
     }
 }
 

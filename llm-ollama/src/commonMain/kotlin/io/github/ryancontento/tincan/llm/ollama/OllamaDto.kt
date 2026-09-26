@@ -21,6 +21,8 @@ internal data class OllamaChatRequest(
 internal data class OllamaMessage(
     val role: String,
     val content: String,
+    /** Base64 image data; null is omitted, so text-only turns are unchanged on the wire. */
+    val images: List<String>? = null,
 )
 
 @Serializable
@@ -61,6 +63,7 @@ internal data class OllamaTag(
     val model: String? = null,
     val size: Long? = null,
     val details: OllamaTagDetails? = null,
+    val capabilities: List<String> = emptyList(),
 )
 
 @Serializable
@@ -69,4 +72,48 @@ internal data class OllamaTagDetails(
     @SerialName("quantization_level") val quantizationLevel: String? = null,
     @SerialName("parameter_size") val parameterSize: String? = null,
     @SerialName("context_length") val contextLength: Int? = null,
+)
+
+@Serializable
+internal data class OllamaPsResponse(
+    val models: List<OllamaPsModel> = emptyList(),
+)
+
+@Serializable
+internal data class OllamaPsModel(
+    val name: String,
+    val size: Long? = null,
+    @SerialName("size_vram") val sizeVram: Long? = null,
+    @SerialName("expires_at") val expiresAt: String? = null,
+    @SerialName("context_length") val contextLength: Int? = null,
+)
+
+/**
+ * A generate call with no prompt and keep_alive 0 is Ollama's documented way to unload.
+ * No default on keepAlive: the encoder drops defaulted fields, and without it the call loads the model.
+ */
+@Serializable
+internal data class OllamaUnloadRequest(
+    val model: String,
+    @SerialName("keep_alive") val keepAlive: Int,
+)
+
+@Serializable
+internal data class OllamaModelRequest(
+    val model: String,
+    val stream: Boolean? = null,
+)
+
+/** One NDJSON line of a pull. Failures arrive in-band as `error`, on a 200. */
+@Serializable
+internal data class OllamaPullChunk(
+    val status: String? = null,
+    val total: Long? = null,
+    val completed: Long? = null,
+    val error: String? = null,
+)
+
+@Serializable
+internal data class OllamaErrorBody(
+    val error: String? = null,
 )

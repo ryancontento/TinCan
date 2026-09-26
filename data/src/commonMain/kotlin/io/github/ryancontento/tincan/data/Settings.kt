@@ -13,6 +13,13 @@ enum class ThemePreference { SYSTEM, LIGHT, DARK }
 internal fun themeFrom(name: String?): ThemePreference =
     ThemePreference.entries.firstOrNull { it.name == name } ?: ThemePreference.SYSTEM
 
+/** Which Enter sends; the other one breaks the line. Shift+Enter always breaks it. */
+enum class SendKey { ENTER, CTRL_ENTER }
+
+/** Same fallback rule as [themeFrom]. */
+internal fun sendKeyFrom(name: String?): SendKey =
+    SendKey.entries.firstOrNull { it.name == name } ?: SendKey.ENTER
+
 /** Null means never saved; the window centres itself. */
 data class WindowGeometry(
     val width: Int? = null,
@@ -23,7 +30,9 @@ data class WindowGeometry(
 
 /** One immutable value so the UI reads a single object, not a flow per setting. */
 data class TinCanSettings(
+    /** The server every request goes to. */
     val serverUrl: String = DEFAULT_SERVER_URL,
+    val savedServers: List<SavedServer> = emptyList(),
     val selectedModel: String? = null,
     val systemPrompt: String = "",
     val temperature: Float? = null,
@@ -34,10 +43,17 @@ data class TinCanSettings(
     /** Time-to-first-token before claiming "loading". GPU and CPU differ hugely. */
     val modelLoadingThresholdMillis: Long = DEFAULT_LOADING_THRESHOLD_MILLIS,
     val theme: ThemePreference = ThemePreference.SYSTEM,
+    val sendKey: SendKey = SendKey.ENTER,
+    /** Closing the window hides it to the tray, so queued messages keep sending. */
+    val closeToTray: Boolean = false,
     /** In dp. Layout inside the window, so it is not part of [window]. */
     val sidebarWidth: Int = DEFAULT_SIDEBAR_WIDTH,
     val window: WindowGeometry = WindowGeometry(),
 ) {
+    /** The saved name for the current address, if it has one. */
+    val activeServerName: String?
+        get() = savedServers.firstOrNull { sameServer(it.url, serverUrl) }?.name
+
     fun toGenerationOptions() = GenerationOptions(
         temperature = temperature,
         numCtx = numCtx,
