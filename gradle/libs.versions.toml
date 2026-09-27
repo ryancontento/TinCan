@@ -28,7 +28,7 @@ lifecycle = "2.8.4"
 navigation = "2.8.0-alpha13"
 
 koin = "4.0.4"
-markdown = "0.32.0"
+markdown = "0.45.0"
 
 turbine = "1.2.0"
 # Matches the slf4j-api Ktor brings in.
